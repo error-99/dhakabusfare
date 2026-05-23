@@ -6,6 +6,7 @@ import { defaultRoutes } from "./src/data/defaultRoutes";
 
 const app = express();
 const PORT = 3000;
+const ROUTES_DB_FILE = path.join(process.cwd(), "routes_db.json");
 const SEARCH_DB_FILE = path.join(process.cwd(), "searches_db.json");
 const REPORT_DB_FILE = path.join(process.cwd(), "reports_db.json");
 
@@ -30,6 +31,19 @@ interface ServerReportLog {
   category: string;
   routeId: string;
   notes: string;
+}
+
+// Load persistent routes data from JSON Database
+function loadRoutes() {
+  if (fs.existsSync(ROUTES_DB_FILE)) {
+    try {
+      const content = fs.readFileSync(ROUTES_DB_FILE, "utf-8");
+      return JSON.parse(content);
+    } catch (e) {
+      console.error("Error reading routes database file, falling back to presets:", e);
+    }
+  }
+  return defaultRoutes;
 }
 
 // Load persistent search logs from JSON Database
@@ -83,7 +97,8 @@ function saveReport(log: ServerReportLog) {
 
 // API: Get current routes
 app.get("/api/routes", (req, res) => {
-  res.json({ success: true, routes: defaultRoutes });
+  const routes = loadRoutes();
+  res.json({ success: true, routes });
 });
 
 // API: Log a user's search query, tracking target IP, Timestamp, and Search keys
