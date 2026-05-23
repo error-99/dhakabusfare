@@ -253,29 +253,27 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans" id="applet-viewport">
       {/* Visual Header */}
-      <header className="bg-white text-slate-900 border-b border-slate-200 shadow-xs" id="main-header">
+      <header className="bg-white text-slate-900 border-b border-slate-200 shadow-xs animate-fade-in" id="main-header">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-indigo-600 rounded-xl flex items-center justify-center shadow-md text-white font-black hover:scale-105 transition-transform">
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="p-2.5 bg-indigo-600 rounded-xl flex items-center justify-center shadow-md text-white font-black hover:scale-105 transition-transform shrink-0">
               <Bus className="w-5.5 h-5.5" />
             </div>
-            <div>
-              <h1 className="text-sm sm:text-base font-black tracking-tight text-slate-900 font-sans">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-sm sm:text-base font-black tracking-tight text-slate-900 font-sans truncate">
                 Dhaka Transit Responsibility Hub
               </h1>
-              <p className="text-xs text-slate-500 font-sans">
+              <p className="text-xs text-slate-500 font-sans leading-tight">
                 Active serverization process that takes complete liability over Dhaka bus routes & fare alignments
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
-            <div className="text-left md:text-right shrink-0">
-              <span className="text-[9px] text-slate-400 block uppercase tracking-wider font-bold">Active Server Database Repository</span>
-              <span className="text-xs font-bold text-indigo-600 font-mono bg-indigo-50 px-2.5 py-1 rounded-xl border border-indigo-150">
-                {sourceLabel}
-              </span>
-            </div>
+          <div className="flex flex-col items-center md:items-end gap-1.5 w-full md:w-auto shrink-0 mt-1 md:mt-0">
+            <span className="text-[9px] text-slate-400 block uppercase tracking-wider font-bold text-center md:text-right">Active Server Database Repository</span>
+            <span className="text-xs font-bold text-indigo-600 font-mono bg-indigo-50 px-2.5 py-1 rounded-xl border border-indigo-150 text-center md:text-right whitespace-nowrap">
+              {sourceLabel}
+            </span>
           </div>
         </div>
       </header>
@@ -413,7 +411,7 @@ export default function App() {
                     }}
                     className="inline-flex items-center gap-1.5 text-xs text-indigo-700 hover:text-indigo-900 font-black cursor-pointer bg-indigo-50/70 hover:bg-indigo-50 px-5 py-3 rounded-2xl border border-dashed border-indigo-200 transition-all shadow-xs"
                   >
-                    𚏏 Looking for complete station lists? View the entire Bus Networks & Stops Timeline checklist here ➔
+                    Looking for complete station lists? View the entire Bus Networks & Stops Timeline checklist here ➔
                   </button>
                 </div>
 
