@@ -39,6 +39,12 @@ interface ServerReportLog {
 // ---------------------------------------------------------
 let mysqlPool: mysql.Pool | null = null;
 let connectionErrorMsg: string | null = null;
+let isMySQLActive = false;
+
+// Fallback in-memory structures when MySQL is unreachable
+const fallbackRoutes = JSON.parse(JSON.stringify(defaultRoutes));
+const fallbackSearches: ServerSearchLog[] = [];
+const fallbackReports: ServerReportLog[] = [];
 
 function logErrorToFile(errorMsg: string) {
   try {
@@ -90,10 +96,12 @@ async function getPool(): Promise<mysql.Pool> {
 
     mysqlPool = pool;
     connectionErrorMsg = null;
+    isMySQLActive = true;
     return mysqlPool;
   } catch (e: any) {
     connectionErrorMsg = e.message || String(e);
     mysqlPool = null;
+    isMySQLActive = false;
     logErrorToFile(`MySQL initialization/connection failure: ${connectionErrorMsg}`);
     throw e;
   }
@@ -178,11 +186,12 @@ async function initDatabase() {
     } else {
       console.log(`[MySQL Ready] Active tables verified in Master Server. Loaded routes count: ${currentRouteCount}`);
     }
-
+    isMySQLActive = true;
   } catch (e: any) {
     connectionErrorMsg = e.message || String(e);
-    console.error("❌ MySQL Connection Failed! No other databases or offline local fallbacks are allowed. Error details:", connectionErrorMsg);
-    logErrorToFile(`Database initialization failed: ${connectionErrorMsg}`);
+    isMySQLActive = false;
+    console.error("⚠️ MySQL Connection refused or failed! Falling back to dynamic local in-memory representation. Err detail:", connectionErrorMsg);
+    logErrorToFile(`Database initialization failed, default fallback loaded: ${connectionErrorMsg}`);
   }
 }
 
@@ -191,84 +200,126 @@ async function initDatabase() {
 // ---------------------------------------------------------
 
 async function loadRoutes() {
-  const pool = await getPool();
-  const [routesRows] = await pool.query("SELECT * FROM routes");
-  const [stopsRows] = await pool.query("SELECT * FROM route_stops ORDER BY id ASC");
-
-  const routeMap = new Map<string, any>();
-  for (const r of (routesRows as any[])) {
-    routeMap.set(r.route_id, {
-      route_id: r.route_id,
-      route_name: r.route_name,
-      fare_per_km: Number(r.fare_per_km),
-      minimum_fare: Number(r.minimum_fare),
-      stops: []
-    });
+  if (!isMySQLActive) {
+    console.log("[MySQL Offline Failover] Returning client in-memory fallback routes array");
+    return fallbackRoutes;
   }
+  try {
+    const pool = await getPool();
+    const [routesRows] = await pool.query("SELECT * FROM routes");
+    const [stopsRows] = await pool.query("SELECT * FROM route_stops ORDER BY id ASC");
 
-  for (const s of (stopsRows as any[])) {
-    const r = routeMap.get(s.route_id);
-    if (r) {
-      r.stops.push({
-        stop_name: s.stop_name,
-        cumulative_km: Number(s.cumulative_km)
+    const routeMap = new Map<string, any>();
+    for (const r of (routesRows as any[])) {
+      routeMap.set(r.route_id, {
+        route_id: r.route_id,
+        route_name: r.route_name,
+        fare_per_km: Number(r.fare_per_km),
+        minimum_fare: Number(r.minimum_fare),
+        stops: []
       });
     }
-  }
 
-  return Array.from(routeMap.values());
+    for (const s of (stopsRows as any[])) {
+      const r = routeMap.get(s.route_id);
+      if (r) {
+        r.stops.push({
+          stop_name: s.stop_name,
+          cumulative_km: Number(s.cumulative_km)
+        });
+      }
+    }
+
+    return Array.from(routeMap.values());
+  } catch (err) {
+    console.warn("[MySQL Offline Failover] routes fetch failed, failover to memory", err);
+    isMySQLActive = false;
+    return fallbackRoutes;
+  }
 }
 
 async function loadSearches(): Promise<ServerSearchLog[]> {
-  const pool = await getPool();
-  const [rows] = await pool.query(`
-    SELECT 
-      id, 
-      timestamp, 
-      ip, 
-      user_agent as userAgent, 
-      from_stop as \`from\`, 
-      to_stop as \`to\`, 
-      route_id as routeId 
-    FROM searches_log 
-    ORDER BY timestamp DESC 
-    LIMIT 100
-  `);
-  return rows as ServerSearchLog[];
+  if (!isMySQLActive) {
+    return fallbackSearches;
+  }
+  try {
+    const pool = await getPool();
+    const [rows] = await pool.query(`
+      SELECT 
+        id, 
+        timestamp, 
+        ip, 
+        user_agent as userAgent, 
+        from_stop as \`from\`, 
+        to_stop as \`to\`, 
+        route_id as routeId 
+      FROM searches_log 
+      ORDER BY timestamp DESC 
+      LIMIT 100
+    `);
+    return rows as ServerSearchLog[];
+  } catch (err) {
+    console.warn("[MySQL Offline Failover] Searches query failed, failover to memory", err);
+    isMySQLActive = false;
+    return fallbackSearches;
+  }
 }
 
 async function saveSearch(log: ServerSearchLog): Promise<void> {
-  const pool = await getPool();
-  await pool.query(`
-    INSERT INTO searches_log (id, timestamp, ip, user_agent, from_stop, to_stop, route_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [log.id, log.timestamp, log.ip, log.userAgent, log.from, log.to, log.routeId || null]);
+  fallbackSearches.unshift(log);
+  if (!isMySQLActive) return;
+  try {
+    const pool = await getPool();
+    await pool.query(`
+      INSERT INTO searches_log (id, timestamp, ip, user_agent, from_stop, to_stop, route_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [log.id, log.timestamp, log.ip, log.userAgent, log.from, log.to, log.routeId || null]);
+  } catch (err) {
+    console.warn("[MySQL Offline Failover] Searches insert failed, saved to memory", err);
+    isMySQLActive = false;
+  }
 }
 
 async function loadReports(): Promise<ServerReportLog[]> {
-  const pool = await getPool();
-  const [rows] = await pool.query(`
-    SELECT 
-      id, 
-      timestamp, 
-      ip, 
-      user_agent as userAgent, 
-      name, 
-      category, 
-      route_id as routeId, 
-      notes 
-    FROM reports_log 
-    ORDER BY timestamp DESC
-  `);
-  return rows as ServerReportLog[];
+  if (!isMySQLActive) {
+    return fallbackReports;
+  }
+  try {
+    const pool = await getPool();
+    const [rows] = await pool.query(`
+      SELECT 
+        id, 
+        timestamp, 
+        ip, 
+        user_agent as userAgent, 
+        name, 
+        category, 
+        route_id as routeId, 
+        notes 
+      FROM reports_log 
+      ORDER BY timestamp DESC
+    `);
+    return rows as ServerReportLog[];
+  } catch (err) {
+    console.warn("[MySQL Offline Failover] Reports query failed, failover to memory", err);
+    isMySQLActive = false;
+    return fallbackReports;
+  }
 }
 
 async function saveReport(log: ServerReportLog): Promise<void> {
-  const pool = await getPool();
-  await pool.query(`
-    INSERT INTO reports_log (id, timestamp, ip, user_agent, name, category, route_id, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `, [log.id, log.timestamp, log.ip, log.userAgent, log.name, log.category, log.routeId, log.notes]);
+  fallbackReports.unshift(log);
+  if (!isMySQLActive) return;
+  try {
+    const pool = await getPool();
+    await pool.query(`
+      INSERT INTO reports_log (id, timestamp, ip, user_agent, name, category, route_id, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [log.id, log.timestamp, log.ip, log.userAgent, log.name, log.category, log.routeId, log.notes]);
+  } catch (err) {
+    console.warn("[MySQL Offline Failover] Reports insert failed, saved to memory", err);
+    isMySQLActive = false;
+  }
 }
 
 // ---------------------------------------------------------
@@ -279,14 +330,16 @@ async function saveReport(log: ServerReportLog): Promise<void> {
 app.get("/api/routes", async (req, res) => {
   try {
     const routes = await loadRoutes();
-    res.json({ success: true, routes });
+    res.json({ success: true, routes, isMySQLActive });
   } catch (error: any) {
     const errMsg = error.message || String(error);
     console.error("MySQL query failed for /api/routes:", errMsg);
     logErrorToFile(`API routes query failed: ${errMsg}`);
-    res.status(500).json({
-      success: false,
-      error: "The transit network system is currently undergoing scheduled maintenance. Please try again later."
+    res.json({
+      success: true,
+      routes: fallbackRoutes,
+      isMySQLActive: false,
+      warning: "Undergoing scheduled DB maintenance, falling back to local dataset."
     });
   }
 });
