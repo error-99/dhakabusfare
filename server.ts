@@ -3,12 +3,10 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { defaultRoutes } from "./src/data/defaultRoutes";
+import Database from "better-sqlite3";
 
 const app = express();
 const PORT = 3000;
-const ROUTES_DB_FILE = path.join(process.cwd(), "routes_db.json");
-const SEARCH_DB_FILE = path.join(process.cwd(), "searches_db.json");
-const REPORT_DB_FILE = path.join(process.cwd(), "reports_db.json");
 
 app.use(express.json({ limit: "20mb" }));
 
@@ -33,69 +31,180 @@ interface ServerReportLog {
   notes: string;
 }
 
-// Load persistent routes data from JSON Database
+// Prepare persistent SQLite database connection
+const DB_PATH = path.join(process.cwd(), "dhaka_transit.db");
+const db = new Database(DB_PATH);
+db.pragma("foreign_keys = ON");
+
+// Create relational schemas for strict transactional storage
+db.exec(`
+  CREATE TABLE IF NOT EXISTS routes (
+    route_id TEXT PRIMARY KEY,
+    route_name TEXT NOT NULL,
+    fare_per_km REAL NOT NULL,
+    minimum_fare REAL NOT NULL DEFAULT 10.0
+  );
+
+  CREATE TABLE IF NOT EXISTS route_stops (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    route_id TEXT NOT NULL,
+    stop_name TEXT NOT NULL,
+    cumulative_km REAL NOT NULL,
+    FOREIGN KEY (route_id) REFERENCES routes (route_id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS searches_log (
+    id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    user_agent TEXT NOT NULL,
+    from_stop TEXT NOT NULL,
+    to_stop TEXT NOT NULL,
+    route_id TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS reports_log (
+    id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    user_agent TEXT NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    route_id TEXT NOT NULL,
+    notes TEXT NOT NULL
+  );
+`);
+
+// Bootstrap SQLite tables with defaults if no master routes exist
+const countRoutes = db.prepare("SELECT count(*) as total FROM routes").get() as { total: number };
+if (countRoutes.total === 0) {
+  console.log("[SQL init] Instantiating default bus lines in master tables...");
+  const insertRoute = db.prepare(`
+    INSERT INTO routes (route_id, route_name, fare_per_km, minimum_fare)
+    VALUES (?, ?, ?, ?)
+  `);
+  const insertStop = db.prepare(`
+    INSERT INTO route_stops (route_id, stop_name, cumulative_km)
+    VALUES (?, ?, ?)
+  `);
+
+  const runBootstrap = db.transaction(() => {
+    for (const route of defaultRoutes) {
+      insertRoute.run(route.route_id, route.route_name, route.fare_per_km, route.minimum_fare || 10.0);
+      for (const stop of route.stops) {
+        insertStop.run(route.route_id, stop.stop_name, stop.cumulative_km);
+      }
+    }
+  });
+  runBootstrap();
+  console.log("[SQL init] Bootstrap complete. Bus routes loaded from database.");
+}
+
+// Retrieve master bus routes and associate their stations in order
 function loadRoutes() {
-  if (fs.existsSync(ROUTES_DB_FILE)) {
-    try {
-      const content = fs.readFileSync(ROUTES_DB_FILE, "utf-8");
-      return JSON.parse(content);
-    } catch (e) {
-      console.error("Error reading routes database file, falling back to presets:", e);
+  try {
+    const routesRows = db.prepare("SELECT * FROM routes").all() as any[];
+    const stopsRows = db.prepare("SELECT * FROM route_stops ORDER BY id ASC").all() as any[];
+
+    const routeMap = new Map<string, any>();
+    for (const r of routesRows) {
+      routeMap.set(r.route_id, {
+        route_id: r.route_id,
+        route_name: r.route_name,
+        fare_per_km: r.fare_per_km,
+        minimum_fare: r.minimum_fare,
+        stops: []
+      });
     }
+
+    for (const s of stopsRows) {
+      const r = routeMap.get(s.route_id);
+      if (r) {
+        r.stops.push({
+          stop_name: s.stop_name,
+          cumulative_km: s.cumulative_km
+        });
+      }
+    }
+
+    return Array.from(routeMap.values());
+  } catch (error) {
+    console.error("Failed to query routes from SQLite database:", error);
+    return defaultRoutes;
   }
-  return defaultRoutes;
 }
 
-// Load persistent search logs from JSON Database
+// Retrieve search analytics stream
 function loadSearches(): ServerSearchLog[] {
-  if (fs.existsSync(SEARCH_DB_FILE)) {
-    try {
-      const content = fs.readFileSync(SEARCH_DB_FILE, "utf-8");
-      return JSON.parse(content);
-    } catch (e) {
-      console.error("Error reading searches database:", e);
-    }
+  try {
+    const rows = db.prepare(`
+      SELECT 
+        id, 
+        timestamp, 
+        ip, 
+        user_agent as userAgent, 
+        from_stop as 'from', 
+        to_stop as 'to', 
+        route_id as routeId 
+      FROM searches_log 
+      ORDER BY timestamp DESC 
+      LIMIT 500
+    `).all() as any[];
+    return rows;
+  } catch (error) {
+    console.error("Failed to query searches_log:", error);
+    return [];
   }
-  return [];
 }
 
-// Append and save search log records to Database safely
+// Persist user searches
 function saveSearch(log: ServerSearchLog) {
   try {
-    const list = loadSearches();
-    list.unshift(log); // Add to beginning of local index
-    // Keep last 500 logs to preserve preview size while remaining highly performant
-    fs.writeFileSync(SEARCH_DB_FILE, JSON.stringify(list.slice(0, 500), null, 2), "utf-8");
-  } catch (e) {
-    console.error("Failed to commit search log to database file:", e);
+    db.prepare(`
+      INSERT INTO searches_log (id, timestamp, ip, user_agent, from_stop, to_stop, route_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(log.id, log.timestamp, log.ip, log.userAgent, log.from, log.to, log.routeId || null);
+  } catch (error) {
+    console.error("Failed to insert search entry in database:", error);
   }
 }
 
-// Load persistent report logs from JSON Database
+// Retrieve inaccuracy reports
 function loadReports(): ServerReportLog[] {
-  if (fs.existsSync(REPORT_DB_FILE)) {
-    try {
-      const content = fs.readFileSync(REPORT_DB_FILE, "utf-8");
-      return JSON.parse(content);
-    } catch (e) {
-      console.error("Error reading reports database:", e);
-    }
+  try {
+    const rows = db.prepare(`
+      SELECT 
+        id, 
+        timestamp, 
+        ip, 
+        user_agent as userAgent, 
+        name, 
+        category, 
+        route_id as routeId, 
+        notes 
+      FROM reports_log 
+      ORDER BY timestamp DESC
+    `).all() as any[];
+    return rows;
+  } catch (error) {
+    console.error("Failed to query reports_log from SQLite:", error);
+    return [];
   }
-  return [];
 }
 
-// Append and save report log records to Database safely
+// Persist reports
 function saveReport(log: ServerReportLog) {
   try {
-    const list = loadReports();
-    list.unshift(log); // Add to beginning
-    fs.writeFileSync(REPORT_DB_FILE, JSON.stringify(list, null, 2), "utf-8");
-  } catch (e) {
-    console.error("Failed to commit report log to database file:", e);
+    db.prepare(`
+      INSERT INTO reports_log (id, timestamp, ip, user_agent, name, category, route_id, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(log.id, log.timestamp, log.ip, log.userAgent, log.name, log.category, log.routeId, log.notes);
+  } catch (error) {
+    console.error("Failed to insert report log in SQLite:", error);
   }
 }
 
-// API: Get current routes
+// API: Get current routes from database
 app.get("/api/routes", (req, res) => {
   const routes = loadRoutes();
   res.json({ success: true, routes });
@@ -125,7 +234,7 @@ app.post("/api/searches", (req, res) => {
   };
 
   saveSearch(newLog);
-  console.log(`[SQL Sim DB Log Live] IP: ${ip} | User searched: ${from} to ${to}`);
+  console.log(`[Database Log Live] IP: ${ip} | User searched: ${from} to ${to}`);
   
   res.json({ success: true, logged: newLog });
 });
@@ -136,7 +245,7 @@ app.get("/api/searches", (req, res) => {
   res.json({ success: true, count: searches.length, searches });
 });
 
-// API: Log a user's mistake/error report to the persistent database file reports_db.json
+// API: Log a user's mistake/error report to the persistent database
 app.post("/api/reports", (req, res) => {
   const { name, category, routeId, notes } = req.body;
 
