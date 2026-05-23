@@ -24,12 +24,13 @@ interface SiteTelemetry {
 }
 
 export default function App() {
-  const [routes, setRoutes] = useState<Route[]>(defaultRoutes);
-  const [sourceLabel, setSourceLabel] = useState("Dhaka Bus Preset JSON");
-  const [selectedRoute, setSelectedRoute] = useState<Route | null>(defaultRoutes[0] || null);
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [sourceLabel, setSourceLabel] = useState("MySQL Database Connection");
+  const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
   const [fromStop, setFromStop] = useState<Stop | null>(null);
   const [toStop, setToStop] = useState<Stop | null>(null);
   const [appLoading, setAppLoading] = useState(true);
+  const [dbError, setDbError] = useState<string | null>(null);
 
   // Telemetry system variables
   const [telemetry, setTelemetry] = useState<SiteTelemetry>({
@@ -51,7 +52,8 @@ export default function App() {
       const data = await res.json();
       if (data && data.success && Array.isArray(data.routes) && data.routes.length > 0) {
         setRoutes(data.routes);
-        setSourceLabel("Persisted Server JSON");
+        setSourceLabel("MySQL Database Active");
+        setDbError(null);
         
         // Retain selection if valid, otherwise select first
         const matched = data.routes.find((r: Route) => r.route_id === selectedRoute?.route_id);
@@ -62,9 +64,15 @@ export default function App() {
           setFromStop(data.routes[0].stops[0] || null);
           setToStop(data.routes[0].stops[data.routes[0].stops.length - 1] || null);
         }
+      } else {
+        const errorMsg = data?.error || "Zero bus pathways fetched from MySQL server tables.";
+        setDbError(errorMsg);
+        setSourceLabel("MySQL Offline");
       }
-    } catch (e) {
-      console.warn("Express server offline or loading, defaulted to pre-compiled local system routes:", e);
+    } catch (e: any) {
+      console.warn("Express server database offline or failed to query MySQL:", e);
+      setDbError(`Failed to connect to the Express server API. Detail: ${e.message || String(e)}`);
+      setSourceLabel("MySQL Offline");
     } finally {
       setAppLoading(false);
     }
@@ -235,7 +243,52 @@ export default function App() {
         {appLoading ? (
           <div className="py-24 text-center space-y-3">
             <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin mx-auto" />
-            <p className="text-xs text-slate-500 font-medium">Connecting with system databases...</p>
+            <p className="text-xs text-slate-500 font-medium font-mono">Connecting with MySQL system databases...</p>
+          </div>
+        ) : dbError && routes.length === 0 ? (
+          <div className="max-w-2xl mx-auto py-12 px-6 bg-white border border-slate-200 shadow-xs rounded-3xl text-center space-y-5" id="mysql-error-fullscreen">
+            <div className="relative inline-flex">
+              <div className="p-4 bg-amber-50 text-amber-600 rounded-full border border-amber-150 animate-pulse">
+                <ShieldAlert className="w-8 h-8" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-sm sm:text-base font-black uppercase tracking-wider text-slate-950 font-sans">
+                MySQL Database Integration Active
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
+                Per user intent, pre-compiled static preset files and SQLite fallback mechanisms are disabled. The application is configured to interact <b>strictly with your MySQL relational database</b>.
+              </p>
+            </div>
+            
+            <div className="p-4 bg-red-50/50 border border-red-150 rounded-2xl text-left space-y-1">
+              <span className="text-[10px] uppercase font-black tracking-wider text-red-600 block">Connection Error Log</span>
+              <p className="text-xs font-mono text-red-800 break-all select-all leading-tight">
+                {dbError}
+              </p>
+            </div>
+
+            <div className="text-xs text-slate-600 text-left bg-slate-50 p-4 rounded-xl border border-slate-200 leading-relaxed">
+              <span className="font-extrabold text-slate-800 block mb-1">To Link Your Remote MySQL Database:</span>
+              <ul className="list-disc pl-4 space-y-1.5 font-medium text-[11.5px]">
+                <li>Access the <b>Environment Variables</b> panel under the Settings menu in your build terminal pane.</li>
+                <li>Assign the corresponding settings to: <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded font-mono text-[10.5px]">MYSQL_HOST</code>, <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded font-mono text-[10.5px]">MYSQL_USER</code>, <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded font-mono text-[10.5px]">MYSQL_PASSWORD</code>, and <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded font-mono text-[10.5px]">MYSQL_DATABASE</code>.</li>
+                <li>The server will dynamically trigger connection checks, create optimal tables on the host, and seed complete bus pathways straight to the database!</li>
+              </ul>
+            </div>
+
+            <div className="pt-2">
+              <button 
+                onClick={() => {
+                  setAppLoading(true);
+                  fetchServerRoutes(true);
+                }}
+                className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-750 text-white font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer hover:scale-[1.01]"
+              >
+                <RefreshCw className="w-4 h-4 shrink-0" />
+                <span>Retry MySQL Database Connection</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-6">
