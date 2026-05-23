@@ -1,0 +1,6 @@
+{
+  "name": "Bus Fare Counter",
+  "description": "Calculate bus fares and search for routes by place names with custom route data upload.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
