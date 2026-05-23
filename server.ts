@@ -40,6 +40,17 @@ interface ServerReportLog {
 let mysqlPool: mysql.Pool | null = null;
 let connectionErrorMsg: string | null = null;
 
+function logErrorToFile(errorMsg: string) {
+  try {
+    const logPath = path.join(process.cwd(), "mysql_error_log.txt");
+    const timestamp = new Date().toISOString();
+    const logEntry = `[${timestamp}] ERROR: ${errorMsg}\n`;
+    fs.appendFileSync(logPath, logEntry, "utf-8");
+  } catch (err) {
+    console.error("Failed to write to txt error log file:", err);
+  }
+}
+
 async function getPool(): Promise<mysql.Pool> {
   if (mysqlPool) return mysqlPool;
 
@@ -54,13 +65,13 @@ async function getPool(): Promise<mysql.Pool> {
     if (!host) missingKeys.push("MYSQL_HOST");
     if (!user) missingKeys.push("MYSQL_USER");
     if (!database) missingKeys.push("MYSQL_DATABASE");
-    throw new Error(
-      `MySQL values missing in .env configuration. Required variables: ${missingKeys.join(", ")}`
-    );
+    const errMsg = `MySQL values missing in .env configuration. Required variables: ${missingKeys.join(", ")}`;
+    logErrorToFile(errMsg);
+    throw new Error(errMsg);
   }
 
   try {
-    mysqlPool = mysql.createPool({
+    const pool = mysql.createPool({
       host,
       port,
       user,
@@ -72,11 +83,18 @@ async function getPool(): Promise<mysql.Pool> {
       enableKeepAlive: true,
       keepAliveInitialDelay: 10000,
     });
+
+    // Test connection pool availability
+    const connection = await pool.getConnection();
+    connection.release();
+
+    mysqlPool = pool;
     connectionErrorMsg = null;
     return mysqlPool;
   } catch (e: any) {
     connectionErrorMsg = e.message || String(e);
     mysqlPool = null;
+    logErrorToFile(`MySQL initialization/connection failure: ${connectionErrorMsg}`);
     throw e;
   }
 }
@@ -164,6 +182,7 @@ async function initDatabase() {
   } catch (e: any) {
     connectionErrorMsg = e.message || String(e);
     console.error("❌ MySQL Connection Failed! No other databases or offline local fallbacks are allowed. Error details:", connectionErrorMsg);
+    logErrorToFile(`Database initialization failed: ${connectionErrorMsg}`);
   }
 }
 
@@ -262,10 +281,12 @@ app.get("/api/routes", async (req, res) => {
     const routes = await loadRoutes();
     res.json({ success: true, routes });
   } catch (error: any) {
-    console.error("MySQL query failed for /api/routes:", error.message || error);
+    const errMsg = error.message || String(error);
+    console.error("MySQL query failed for /api/routes:", errMsg);
+    logErrorToFile(`API routes query failed: ${errMsg}`);
     res.status(500).json({
       success: false,
-      error: `Database connection error: ${error.message || error}. Please ensure your MySQL server settings are configured correctly.`
+      error: "The transit network system is currently undergoing scheduled maintenance. Please try again later."
     });
   }
 });

@@ -208,6 +208,48 @@ export default function App() {
     );
   }, [routes, routeSearchQuery]);
 
+  if (dbError && routes.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans" id="mysql-error-fullscreen-wrapper">
+        <div className="max-w-md w-full py-12 px-8 bg-white border border-slate-200 shadow-xl rounded-2xl text-center space-y-6" id="mysql-error-fullscreen">
+          <div className="relative inline-flex">
+            <div className="p-4 bg-amber-50 text-amber-600 rounded-full border border-amber-100">
+              <ShieldAlert className="w-8 h-8 animate-pulse" />
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            <h1 className="text-[11px] uppercase tracking-widest font-extrabold text-slate-400 font-mono">
+              Dhaka Transit Responsibility Hub
+            </h1>
+            <h2 className="text-lg font-black uppercase tracking-wide text-slate-900 font-sans">
+              App in Maintenance
+            </h2>
+            <p className="text-xs font-semibold text-slate-600">
+              Please try again.
+            </p>
+            <p className="text-xs text-slate-550 leading-relaxed max-w-sm mx-auto">
+              We are currently aligning and updating our routes & fare synchronization database. Please try again later.
+            </p>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100">
+            <button 
+              onClick={() => {
+                setAppLoading(true);
+                fetchServerRoutes(true);
+              }}
+              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+              <span>Retry Connection</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans" id="applet-viewport">
       {/* Visual Header */}
@@ -244,51 +286,6 @@ export default function App() {
           <div className="py-24 text-center space-y-3">
             <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin mx-auto" />
             <p className="text-xs text-slate-500 font-medium font-mono">Connecting with MySQL system databases...</p>
-          </div>
-        ) : dbError && routes.length === 0 ? (
-          <div className="max-w-2xl mx-auto py-12 px-6 bg-white border border-slate-200 shadow-xs rounded-3xl text-center space-y-5" id="mysql-error-fullscreen">
-            <div className="relative inline-flex">
-              <div className="p-4 bg-amber-50 text-amber-600 rounded-full border border-amber-150 animate-pulse">
-                <ShieldAlert className="w-8 h-8" />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-sm sm:text-base font-black uppercase tracking-wider text-slate-950 font-sans">
-                MySQL Database Integration Active
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
-                Per user intent, pre-compiled static preset files and SQLite fallback mechanisms are disabled. The application is configured to interact <b>strictly with your MySQL relational database</b>.
-              </p>
-            </div>
-            
-            <div className="p-4 bg-red-50/50 border border-red-150 rounded-2xl text-left space-y-1">
-              <span className="text-[10px] uppercase font-black tracking-wider text-red-600 block">Connection Error Log</span>
-              <p className="text-xs font-mono text-red-800 break-all select-all leading-tight">
-                {dbError}
-              </p>
-            </div>
-
-            <div className="text-xs text-slate-600 text-left bg-slate-50 p-4 rounded-xl border border-slate-200 leading-relaxed">
-              <span className="font-extrabold text-slate-800 block mb-1">To Link Your Remote MySQL Database:</span>
-              <ul className="list-disc pl-4 space-y-1.5 font-medium text-[11.5px]">
-                <li>Access the <b>Environment Variables</b> panel under the Settings menu in your build terminal pane.</li>
-                <li>Assign the corresponding settings to: <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded font-mono text-[10.5px]">MYSQL_HOST</code>, <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded font-mono text-[10.5px]">MYSQL_USER</code>, <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded font-mono text-[10.5px]">MYSQL_PASSWORD</code>, and <code className="bg-slate-200 text-slate-800 px-1 py-0.5 rounded font-mono text-[10.5px]">MYSQL_DATABASE</code>.</li>
-                <li>The server will dynamically trigger connection checks, create optimal tables on the host, and seed complete bus pathways straight to the database!</li>
-              </ul>
-            </div>
-
-            <div className="pt-2">
-              <button 
-                onClick={() => {
-                  setAppLoading(true);
-                  fetchServerRoutes(true);
-                }}
-                className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-750 text-white font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer hover:scale-[1.01]"
-              >
-                <RefreshCw className="w-4 h-4 shrink-0" />
-                <span>Retry MySQL Database Connection</span>
-              </button>
-            </div>
           </div>
         ) : (
           <div className="space-y-6">
