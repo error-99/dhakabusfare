@@ -496,22 +496,16 @@ export default function App() {
                   className="space-y-6"
                 >
                   {/* Fare calculations dynamic ticket Booth */}
-                  <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs">
-                    <div className="pb-4 mb-4 border-b border-slate-100">
-                       <span className="text-[10px] text-slate-400 font-mono block uppercase tracking-wider font-bold">Ticket Fare O'Meter</span>
-                       <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider font-sans">Transit Ticket Generator</h3>
-                    </div>
-                    <FareCalculator
-                      routes={routes}
-                      selectedRoute={selectedRoute}
-                      onSelectRoute={handleSelectRoute}
-                      fromStop={fromStop}
-                      onSelectFromStop={setFromStop}
-                      toStop={toStop}
-                      onSelectToStop={setToStop}
-                      onOpenReport={() => setIsReportOpen(true)}
-                    />
-                  </div>
+                  <FareCalculator
+                    routes={routes}
+                    selectedRoute={selectedRoute}
+                    onSelectRoute={handleSelectRoute}
+                    fromStop={fromStop}
+                    onSelectFromStop={setFromStop}
+                    toStop={toStop}
+                    onSelectToStop={setToStop}
+                    onOpenReport={() => setIsReportOpen(true)}
+                  />
                 </motion.div>
               )}
 

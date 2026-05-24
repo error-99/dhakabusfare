@@ -178,7 +178,7 @@ export default function FareCalculator({
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
-            className="group/ticket bg-indigo-50/45 hover:bg-white border border-dashed hover:border-solid border-indigo-200 hover:border-indigo-500 rounded-xl p-4 space-y-4 shadow-sm hover:shadow-md transition-all duration-300"
+            className="group/ticket bg-indigo-50/45 hover:bg-white border border-indigo-200 hover:border-indigo-400 rounded-xl p-4 space-y-4 shadow-sm hover:shadow-md transition-all duration-300"
           >
             {/* Visual Receipt ticket header */}
             <div className="flex border-b border-dashed border-indigo-200/80 pb-3 justify-between items-center">
@@ -259,15 +259,15 @@ export default function FareCalculator({
               </div>
             </div>
 
-            {/* Dual verification and error annotation hotlinks */}
-            <div className="pt-3 flex items-center justify-between gap-4 border-t border-dashed border-slate-205">
+            {/* Dual verification and error annotation hotlinks positioned as a seamless edge-to-edge card footer */}
+            <div className="-mx-4 -mb-4 mt-4 p-3 bg-slate-50 border-t border-indigo-150 flex items-center justify-between gap-3 rounded-b-xl">
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   if (onOpenReport) onOpenReport();
                 }}
-                className="flex-1 py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-850 font-bold text-xs rounded-xl border border-red-100 flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                className="flex-1 py-2 px-2.5 bg-white hover:bg-rose-50/50 text-slate-700 hover:text-rose-600 font-bold text-[11px] rounded-lg border border-slate-200 hover:border-rose-200 flex items-center justify-center gap-1 cursor-pointer transition-all active:scale-95 shadow-2xs"
                 id="ticket-report-left"
               >
                 <span>⚠️ Add Report</span>
@@ -279,7 +279,7 @@ export default function FareCalculator({
                   e.stopPropagation();
                   if (onOpenReport) onOpenReport();
                 }}
-                className="flex-1 py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-850 font-bold text-xs rounded-xl border border-red-100 flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95 text-right"
+                className="flex-1 py-2 px-2.5 bg-white hover:bg-rose-50/50 text-slate-700 hover:text-rose-600 font-bold text-[11px] rounded-lg border border-slate-200 hover:border-rose-200 flex items-center justify-center gap-1 cursor-pointer transition-all active:scale-95 text-right shadow-2xs"
                 id="ticket-report-right"
               >
                 <span>Add Report ⚠️</span>
