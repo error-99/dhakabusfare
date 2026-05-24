@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { Route, Stop } from "../types";
-import { MapPin, Search, ArrowRight, Check, Compass, Sliders, RefreshCw, Navigation, Navigation2 } from "lucide-react";
+import { MapPin, Search, ArrowRight, Check, Compass, Sliders, RefreshCw, Navigation, Navigation2, Ticket } from "lucide-react";
 import { getEnglishName } from "../utils/stationNames";
 
 interface PlaceSearchProps {
@@ -295,7 +295,7 @@ export default function PlaceSearch({
             {endQuery && (
               <button
                 onClick={() => setEndQuery("")}
-                className="absolute inset-y-0 right-2 flex items-center text-[10px] text-slate-400 hover:text-slate-650 cursor-pointer border-0 bg-transparent font-sans"
+                className="absolute inset-y-0 right-2 flex items-center text-[10px] text-slate-400 hover:text-slate-655 cursor-pointer border-0 bg-transparent font-sans"
               >
                 ✕
               </button>
@@ -303,6 +303,49 @@ export default function PlaceSearch({
           </div>
         </div>
       </div>
+
+      {/* Dynamic prominent Calculate button when both inputs are specified */}
+      {startQuery.trim() && endQuery.trim() && (
+        <div className="pt-1">
+          <button
+            onClick={() => {
+              // Find first matched connection and apply it or trigger fallback calculation
+              if (matchedConnections.type === "both" && matchedConnections.data.length > 0) {
+                const item = matchedConnections.data[0];
+                handleApplyTrip(item.route, item.fromStop, item.toStop);
+              } else {
+                // If there's no exact match, try to find the route containing both stops,
+                // or just go to the ticket tab so they can see the calculator form
+                let foundRoute = routes[0];
+                let fromS = routes[0]?.stops[0] || null;
+                let toS = routes[0]?.stops[routes[0]?.stops.length - 1] || null;
+                
+                for (const route of routes) {
+                  const s = route.stops.find(st => st.stop_name.toLowerCase().includes(startQuery.toLowerCase()) || getEnglishName(st.stop_name).toLowerCase().includes(startQuery.toLowerCase()));
+                  const d = route.stops.find(st => st.stop_name.toLowerCase().includes(endQuery.toLowerCase()) || getEnglishName(st.stop_name).toLowerCase().includes(endQuery.toLowerCase()));
+                  if (s && d) {
+                    foundRoute = route;
+                    fromS = s;
+                    toS = d;
+                    break;
+                  }
+                }
+                
+                if (foundRoute && fromS && toS) {
+                  handleApplyTrip(foundRoute, fromS, toS);
+                } else if (onSelectFullTrip && routes[0]) {
+                  onSelectFullTrip(routes[0], routes[0].stops[0], routes[0].stops[routes[0].stops.length - 1]);
+                }
+              }
+            }}
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md select-none flex items-center justify-center gap-2 active:scale-[0.98]"
+            id="planner-calculate-btn"
+          >
+            <Ticket className="w-4 h-4" />
+            <span>Calculate Ticket & Show Receipt</span>
+          </button>
+        </div>
+      )}
 
       {/* Suggested Stations Lists - To minimize on-screen clutter and aid quick testing */}
       {!hasSearch && (

@@ -4,6 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { defaultRoutes } from "./src/data/defaultRoutes";
 import mysql from "mysql2/promise";
+import Database from "better-sqlite3";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -35,13 +36,15 @@ interface ServerReportLog {
 }
 
 // ---------------------------------------------------------
-// MySQL Database Pool lazy instantiation
+// MySQL & SQLite Configuration Setup
 // ---------------------------------------------------------
 let mysqlPool: mysql.Pool | null = null;
 let connectionErrorMsg: string | null = null;
 let isMySQLActive = false;
+let isMaintenanceMode = false;
+let sqliteDb: any = null;
 
-// Fallback in-memory structures when MySQL is unreachable
+// Fallback arrays for in-memory structures (if any secondary fails occur)
 const fallbackRoutes = JSON.parse(JSON.stringify(defaultRoutes));
 const fallbackSearches: ServerSearchLog[] = [];
 const fallbackReports: ServerReportLog[] = [];
@@ -108,103 +111,186 @@ async function getPool(): Promise<mysql.Pool> {
 }
 
 // ---------------------------------------------------------
-// MySQL Database Schema & Table Seeding (Bootstrap)
+// Master Database Bootstrapper
 // ---------------------------------------------------------
 async function initDatabase() {
-  console.log("[Database master setup] Initializing strictly to MySQL server database...");
-  try {
-    const pool = await getPool();
+  const useMysql = process.env.USE_MYSQL === "true";
 
-    // Create relation schemas using InnoDB storage engine with physical keys and index structures
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS routes (
-        route_id VARCHAR(100) NOT NULL PRIMARY KEY,
-        route_name VARCHAR(255) NOT NULL,
-        fare_per_km DECIMAL(8,4) NOT NULL,
-        minimum_fare DECIMAL(8,4) NOT NULL DEFAULT 10.00
-      ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+  if (useMysql) {
+    console.log("[Database master setup] Initializing strictly to MySQL server database...");
+    try {
+      const pool = await getPool();
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS route_stops (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        route_id VARCHAR(100) NOT NULL,
-        stop_name VARCHAR(255) NOT NULL,
-        cumulative_km DECIMAL(8,4) NOT NULL,
-        FOREIGN KEY (route_id) REFERENCES routes(route_id) ON DELETE CASCADE,
-        INDEX idx_route_id (route_id)
-      ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      // Create relation schemas using InnoDB storage engine with physical keys and index structures
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS routes (
+          route_id VARCHAR(100) NOT NULL PRIMARY KEY,
+          route_name VARCHAR(255) NOT NULL,
+          fare_per_km DECIMAL(8,4) NOT NULL,
+          minimum_fare DECIMAL(8,4) NOT NULL DEFAULT 10.00
+        ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+      `);
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS searches_log (
-        id VARCHAR(100) NOT NULL PRIMARY KEY,
-        timestamp VARCHAR(100) NOT NULL,
-        ip VARCHAR(45) NOT NULL,
-        user_agent VARCHAR(512) NOT NULL,
-        from_stop VARCHAR(255) NOT NULL,
-        to_stop VARCHAR(255) NOT NULL,
-        route_id VARCHAR(100) NULL,
-        INDEX idx_search_timestamp (timestamp)
-      ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS route_stops (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          route_id VARCHAR(100) NOT NULL,
+          stop_name VARCHAR(255) NOT NULL,
+          cumulative_km DECIMAL(8,4) NOT NULL,
+          FOREIGN KEY (route_id) REFERENCES routes(route_id) ON DELETE CASCADE,
+          INDEX idx_route_id (route_id)
+        ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+      `);
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS reports_log (
-        id VARCHAR(100) NOT NULL PRIMARY KEY,
-        timestamp VARCHAR(100) NOT NULL,
-        ip VARCHAR(45) NOT NULL,
-        user_agent VARCHAR(512) NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        category VARCHAR(150) NOT NULL,
-        route_id VARCHAR(100) NOT NULL,
-        notes TEXT NOT NULL,
-        INDEX idx_report_timestamp (timestamp)
-      ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS searches_log (
+          id VARCHAR(100) NOT NULL PRIMARY KEY,
+          timestamp VARCHAR(100) NOT NULL,
+          ip VARCHAR(45) NOT NULL,
+          user_agent VARCHAR(512) NOT NULL,
+          from_stop VARCHAR(255) NOT NULL,
+          to_stop VARCHAR(255) NOT NULL,
+          route_id VARCHAR(100) NULL,
+          INDEX idx_search_timestamp (timestamp)
+        ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+      `);
 
-    // Fetch total count to see if we need to seed
-    const [rows] = await pool.query("SELECT COUNT(*) as total FROM routes");
-    const currentRouteCount = (rows as any)[0]?.total || 0;
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS reports_log (
+          id VARCHAR(100) NOT NULL PRIMARY KEY,
+          timestamp VARCHAR(100) NOT NULL,
+          ip VARCHAR(45) NOT NULL,
+          user_agent VARCHAR(512) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          category VARCHAR(150) NOT NULL,
+          route_id VARCHAR(100) NOT NULL,
+          notes TEXT NOT NULL,
+          INDEX idx_report_timestamp (timestamp)
+        ) ENGINE=InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+      `);
 
-    if (currentRouteCount === 0) {
-      console.log("[MySQL Seed] Seeding MySQL database schema tables with initial routes values...");
-      
-      for (const route of defaultRoutes) {
-        await pool.query(
-          "INSERT INTO routes (route_id, route_name, fare_per_km, minimum_fare) VALUES (?, ?, ?, ?)",
-          [route.route_id, route.route_name, route.fare_per_km, route.minimum_fare || 10.0]
-        );
-        for (const stop of route.stops) {
+      // Fetch total count to see if we need to seed
+      const [rows] = await pool.query("SELECT COUNT(*) as total FROM routes");
+      const currentRouteCount = (rows as any)[0]?.total || 0;
+
+      if (currentRouteCount === 0) {
+        console.log("[MySQL Seed] Seeding MySQL database schema tables with initial routes values...");
+        for (const route of defaultRoutes) {
           await pool.query(
-            "INSERT INTO route_stops (route_id, stop_name, cumulative_km) VALUES (?, ?, ?)",
-            [route.route_id, stop.stop_name, stop.cumulative_km]
+            "INSERT INTO routes (route_id, route_name, fare_per_km, minimum_fare) VALUES (?, ?, ?, ?)",
+            [route.route_id, route.route_name, route.fare_per_km, route.minimum_fare || 10.0]
           );
+          for (const stop of route.stops) {
+            await pool.query(
+              "INSERT INTO route_stops (route_id, stop_name, cumulative_km) VALUES (?, ?, ?)",
+              [route.route_id, stop.stop_name, stop.cumulative_km]
+            );
+          }
         }
+        console.log("[MySQL Seed] Seeding completed successfully. Routes loaded from database tables.");
+      } else {
+        console.log(`[MySQL Ready] Active tables verified in Master Server. Loaded routes count: ${currentRouteCount}`);
       }
-      console.log("[MySQL Seed] Seeding completed successfully. Routes loaded from database tables.");
-    } else {
-      console.log(`[MySQL Ready] Active tables verified in Master Server. Loaded routes count: ${currentRouteCount}`);
+      isMySQLActive = true;
+      isMaintenanceMode = false;
+    } catch (e: any) {
+      connectionErrorMsg = e.message || String(e);
+      isMySQLActive = false;
+      isMaintenanceMode = true; // Block service as MySQL-only is true and failing
+      console.error("⚠️ MySQL Connection failure! Service entering maintenance mode as requested:", connectionErrorMsg);
+      logErrorToFile(`Database initialization failed, maintenance active: ${connectionErrorMsg}`);
     }
-    isMySQLActive = true;
-  } catch (e: any) {
-    connectionErrorMsg = e.message || String(e);
-    isMySQLActive = false;
-    console.error("⚠️ MySQL Connection refused or failed! Falling back to dynamic local in-memory representation. Err detail:", connectionErrorMsg);
-    logErrorToFile(`Database initialization failed, default fallback loaded: ${connectionErrorMsg}`);
+  } else {
+    console.log("[Database master setup] Initializing strictly to local SQLite file-based database...");
+    try {
+      const dbPath = path.join(process.cwd(), "dhaka_transit.db");
+      sqliteDb = new Database(dbPath);
+
+      // Create tables inside SQLite
+      sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS routes (
+          route_id TEXT PRIMARY KEY,
+          route_name TEXT NOT NULL,
+          fare_per_km REAL NOT NULL,
+          minimum_fare REAL NOT NULL DEFAULT 10.0
+        );
+      `);
+
+      sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS route_stops (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          route_id TEXT NOT NULL,
+          stop_name TEXT NOT NULL,
+          cumulative_km REAL NOT NULL,
+          FOREIGN KEY (route_id) REFERENCES routes(route_id) ON DELETE CASCADE
+        );
+      `);
+
+      sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS searches_log (
+          id TEXT PRIMARY KEY,
+          timestamp TEXT NOT NULL,
+          ip TEXT NOT NULL,
+          user_agent TEXT NOT NULL,
+          from_stop TEXT NOT NULL,
+          to_stop TEXT NOT NULL,
+          route_id TEXT
+        );
+      `);
+
+      sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS reports_log (
+          id TEXT PRIMARY KEY,
+          timestamp TEXT NOT NULL,
+          ip TEXT NOT NULL,
+          user_agent TEXT NOT NULL,
+          name TEXT NOT NULL,
+          category TEXT NOT NULL,
+          route_id TEXT NOT NULL,
+          notes TEXT NOT NULL
+        );
+      `);
+
+      // Seed SQLite if empty
+      const countStmt = sqliteDb.prepare("SELECT COUNT(*) as count FROM routes");
+      const row = countStmt.get() as { count: number };
+      if (row.count === 0) {
+        console.log("[SQLite Seed] Seeding SQLite database with default routes...");
+        const insertRoute = sqliteDb.prepare("INSERT INTO routes (route_id, route_name, fare_per_km, minimum_fare) VALUES (?, ?, ?, ?)");
+        const insertStop = sqliteDb.prepare("INSERT INTO route_stops (route_id, stop_name, cumulative_km) VALUES (?, ?, ?)");
+
+        const transaction = sqliteDb.transaction(() => {
+          for (const route of defaultRoutes) {
+            insertRoute.run(route.route_id, route.route_name, route.fare_per_km, route.minimum_fare || 10.0);
+            for (const stop of route.stops) {
+              insertStop.run(route.route_id, stop.stop_name, stop.cumulative_km);
+            }
+          }
+        });
+        transaction();
+        console.log("[SQLite Seed] Seeding completed successfully!");
+      } else {
+        console.log(`[SQLite Ready] Loaded local SQLite file successfully. Routes count: ${row.count}`);
+      }
+      isMySQLActive = false;
+      isMaintenanceMode = false;
+    } catch (e: any) {
+      console.error("⚠️ SQLite initialization failed:", e.message || e);
+      isMaintenanceMode = true;
+    }
   }
 }
 
 // ---------------------------------------------------------
-// Exclusively Database Retrieval Handlers (No fallback arrays allowed)
+// Exclusively Database Retrieval Handlers
 // ---------------------------------------------------------
-
 async function loadRoutes() {
-  if (!isMySQLActive) {
-    console.log("[MySQL Offline Failover] Returning client in-memory fallback routes array");
-    return fallbackRoutes;
-  }
-  try {
+  const useMysql = process.env.USE_MYSQL === "true";
+
+  if (useMysql) {
+    if (!isMySQLActive) {
+      throw new Error("MySQL database is requested but offline. Maintenance window is active.");
+    }
     const pool = await getPool();
     const [routesRows] = await pool.query("SELECT * FROM routes");
     const [stopsRows] = await pool.query("SELECT * FROM route_stops ORDER BY id ASC");
@@ -231,18 +317,43 @@ async function loadRoutes() {
     }
 
     return Array.from(routeMap.values());
-  } catch (err) {
-    console.warn("[MySQL Offline Failover] routes fetch failed, failover to memory", err);
-    isMySQLActive = false;
-    return fallbackRoutes;
+  } else {
+    if (!sqliteDb) {
+      throw new Error("SQLite database is offline.");
+    }
+    const routesRows = sqliteDb.prepare("SELECT * FROM routes").all() as any[];
+    const stopsRows = sqliteDb.prepare("SELECT * FROM route_stops ORDER BY id ASC").all() as any[];
+
+    const routeMap = new Map<string, any>();
+    for (const r of routesRows) {
+      routeMap.set(r.route_id, {
+        route_id: r.route_id,
+        route_name: r.route_name,
+        fare_per_km: Number(r.fare_per_km),
+        minimum_fare: Number(r.minimum_fare),
+        stops: []
+      });
+    }
+
+    for (const s of stopsRows) {
+      const r = routeMap.get(s.route_id);
+      if (r) {
+        r.stops.push({
+          stop_name: s.stop_name,
+          cumulative_km: Number(s.cumulative_km)
+        });
+      }
+    }
+
+    return Array.from(routeMap.values());
   }
 }
 
 async function loadSearches(): Promise<ServerSearchLog[]> {
-  if (!isMySQLActive) {
-    return fallbackSearches;
-  }
-  try {
+  const useMysql = process.env.USE_MYSQL === "true";
+
+  if (useMysql) {
+    if (!isMySQLActive) return [];
     const pool = await getPool();
     const [rows] = await pool.query(`
       SELECT 
@@ -258,33 +369,59 @@ async function loadSearches(): Promise<ServerSearchLog[]> {
       LIMIT 100
     `);
     return rows as ServerSearchLog[];
-  } catch (err) {
-    console.warn("[MySQL Offline Failover] Searches query failed, failover to memory", err);
-    isMySQLActive = false;
-    return fallbackSearches;
+  } else {
+    if (!sqliteDb) return [];
+    const rows = sqliteDb.prepare(`
+      SELECT 
+        id, 
+        timestamp, 
+        ip, 
+        user_agent as userAgent, 
+        from_stop as "from", 
+        to_stop as "to", 
+        route_id as routeId 
+      FROM searches_log 
+      ORDER BY timestamp DESC 
+      LIMIT 100
+    `).all() as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      timestamp: r.timestamp,
+      ip: r.ip,
+      userAgent: r.userAgent,
+      from: r.from,
+      to: r.to,
+      routeId: r.routeId
+    }));
   }
 }
 
 async function saveSearch(log: ServerSearchLog): Promise<void> {
-  fallbackSearches.unshift(log);
-  if (!isMySQLActive) return;
-  try {
+  const useMysql = process.env.USE_MYSQL === "true";
+
+  if (useMysql) {
+    if (!isMySQLActive) return;
     const pool = await getPool();
     await pool.query(`
       INSERT INTO searches_log (id, timestamp, ip, user_agent, from_stop, to_stop, route_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [log.id, log.timestamp, log.ip, log.userAgent, log.from, log.to, log.routeId || null]);
-  } catch (err) {
-    console.warn("[MySQL Offline Failover] Searches insert failed, saved to memory", err);
-    isMySQLActive = false;
+  } else {
+    if (!sqliteDb) return;
+    const stmt = sqliteDb.prepare(`
+      INSERT INTO searches_log (id, timestamp, ip, user_agent, from_stop, to_stop, route_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(log.id, log.timestamp, log.ip, log.userAgent, log.from, log.to, log.routeId || null);
   }
 }
 
 async function loadReports(): Promise<ServerReportLog[]> {
-  if (!isMySQLActive) {
-    return fallbackReports;
-  }
-  try {
+  const useMysql = process.env.USE_MYSQL === "true";
+
+  if (useMysql) {
+    if (!isMySQLActive) return [];
     const pool = await getPool();
     const [rows] = await pool.query(`
       SELECT 
@@ -300,25 +437,52 @@ async function loadReports(): Promise<ServerReportLog[]> {
       ORDER BY timestamp DESC
     `);
     return rows as ServerReportLog[];
-  } catch (err) {
-    console.warn("[MySQL Offline Failover] Reports query failed, failover to memory", err);
-    isMySQLActive = false;
-    return fallbackReports;
+  } else {
+    if (!sqliteDb) return [];
+    const rows = sqliteDb.prepare(`
+      SELECT 
+        id, 
+        timestamp, 
+        ip, 
+        user_agent as userAgent, 
+        name, 
+        category, 
+        route_id as routeId, 
+        notes 
+      FROM reports_log 
+      ORDER BY timestamp DESC
+    `).all() as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      timestamp: r.timestamp,
+      ip: r.ip,
+      userAgent: r.userAgent,
+      name: r.name,
+      category: r.category,
+      routeId: r.routeId,
+      notes: r.notes
+    }));
   }
 }
 
 async function saveReport(log: ServerReportLog): Promise<void> {
-  fallbackReports.unshift(log);
-  if (!isMySQLActive) return;
-  try {
+  const useMysql = process.env.USE_MYSQL === "true";
+
+  if (useMysql) {
+    if (!isMySQLActive) return;
     const pool = await getPool();
     await pool.query(`
       INSERT INTO reports_log (id, timestamp, ip, user_agent, name, category, route_id, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [log.id, log.timestamp, log.ip, log.userAgent, log.name, log.category, log.routeId, log.notes]);
-  } catch (err) {
-    console.warn("[MySQL Offline Failover] Reports insert failed, saved to memory", err);
-    isMySQLActive = false;
+  } else {
+    if (!sqliteDb) return;
+    const stmt = sqliteDb.prepare(`
+        INSERT INTO reports_log (id, timestamp, ip, user_agent, name, category, route_id, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+    stmt.run(log.id, log.timestamp, log.ip, log.userAgent, log.name, log.category, log.routeId, log.notes);
   }
 }
 
@@ -326,26 +490,37 @@ async function saveReport(log: ServerReportLog): Promise<void> {
 // Express REST Endpoints
 // ---------------------------------------------------------
 
-// API: Get current routes from MySQL database
+// API: Get current routes from active database
 app.get("/api/routes", async (req, res) => {
+  if (isMaintenanceMode) {
+    return res.status(503).json({
+      success: false,
+      maintenance: true,
+      error: "Master database is undergoing active scheduled maintenance."
+    });
+  }
+
   try {
     const routes = await loadRoutes();
-    res.json({ success: true, routes, isMySQLActive });
+    res.json({ success: true, routes, isMySQLActive, isSQLiteActive: !isMySQLActive });
   } catch (error: any) {
     const errMsg = error.message || String(error);
-    console.error("MySQL query failed for /api/routes:", errMsg);
+    console.error("Database routes fetch failed:", errMsg);
     logErrorToFile(`API routes query failed: ${errMsg}`);
-    res.json({
-      success: true,
-      routes: fallbackRoutes,
-      isMySQLActive: false,
-      warning: "Undergoing scheduled DB maintenance, falling back to local dataset."
+    res.status(503).json({
+      success: false,
+      maintenance: true,
+      error: "Server database connection was interrupted. Please try again soon."
     });
   }
 });
 
-// API: Log a user's search query to MySQL database
+// API: Log a user's search query to active database
 app.post("/api/searches", async (req, res) => {
+  if (isMaintenanceMode) {
+    return res.status(503).json({ success: false, maintenance: true, error: "System in maintenance mode." });
+  }
+
   const { from, to, routeId } = req.body;
   if (!from || !to) {
     return res.status(400).json({ success: false, error: "Both origin and destination parameters are required." });
@@ -368,10 +543,10 @@ app.post("/api/searches", async (req, res) => {
 
   try {
     await saveSearch(newLog);
-    console.log(`[MySQL Audit Log] Recorded user search: ${from} to ${to}`);
+    console.log(`[Database Audit Log] Recorded user search: ${from} to ${to}`);
     res.json({ success: true, logged: newLog });
   } catch (error: any) {
-    console.error("MySQL log failed for /api/searches:", error.message || error);
+    console.error("Audit log write failed:", error.message || error);
     res.status(500).json({
       success: false,
       error: `Database write error: ${error.message || error}.`
@@ -381,11 +556,15 @@ app.post("/api/searches", async (req, res) => {
 
 // API: Get recent searches
 app.get("/api/searches", async (req, res) => {
+  if (isMaintenanceMode) {
+    return res.status(503).json({ success: false, maintenance: true, error: "System in maintenance mode." });
+  }
+
   try {
     const searches = await loadSearches();
     res.json({ success: true, count: searches.length, searches });
   } catch (error: any) {
-    console.error("MySQL query failed for /api/searches:", error.message || error);
+    console.error("Searches loading failed:", error.message || error);
     res.status(500).json({
       success: false,
       error: `Database query error: ${error.message || error}.`
@@ -393,8 +572,12 @@ app.get("/api/searches", async (req, res) => {
   }
 });
 
-// API: Log a user report to MySQL database
+// API: Log a user report to active database
 app.post("/api/reports", async (req, res) => {
+  if (isMaintenanceMode) {
+    return res.status(503).json({ success: false, maintenance: true, error: "System in maintenance mode." });
+  }
+
   const { name, category, routeId, notes } = req.body;
   if (!category || !notes) {
     return res.status(400).json({ success: false, error: "Category and notes are required fields." });
@@ -417,10 +600,10 @@ app.post("/api/reports", async (req, res) => {
 
   try {
     await saveReport(newReport);
-    console.log(`[MySQL Report Log] Recorded user report in categoy: ${category}`);
+    console.log(`[Database Report Log] Recorded user report in category: ${category}`);
     res.json({ success: true, logged: newReport });
   } catch (error: any) {
-    console.error("MySQL write failed for /api/reports:", error.message || error);
+    console.error("Report write failed:", error.message || error);
     res.status(500).json({
       success: false,
       error: `Database write error: ${error.message || error}.`
@@ -428,13 +611,17 @@ app.post("/api/reports", async (req, res) => {
   }
 });
 
-// API: List logged reports from MySQL database
+// API: List logged reports from active database
 app.get("/api/reports", async (req, res) => {
+  if (isMaintenanceMode) {
+    return res.status(503).json({ success: false, maintenance: true, error: "System in maintenance mode." });
+  }
+
   try {
     const reports = await loadReports();
     res.json({ success: true, count: reports.length, reports });
   } catch (error: any) {
-    console.error("MySQL query failed for /api/reports:", error.message || error);
+    console.error("Reports loading failed:", error.message || error);
     res.status(500).json({
       success: false,
       error: `Database query error: ${error.message || error}.`

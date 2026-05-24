@@ -6,7 +6,7 @@ import PlaceSearch from "./components/PlaceSearch";
 import RouteTimeline from "./components/RouteTimeline";
 import VisualRouteLineMap from "./components/VisualRouteLineMap";
 import ReportPopup from "./components/ReportPopup";
-import { Compass, Bus, Map, FileJson, Route as RouteIcon, Info, Layers, CheckCircle2, RefreshCw, KeyRound, Lock, Unlock, ShieldAlert, Activity, FileCode, Check, Menu, X } from "lucide-react";
+import { Compass, Bus, Map, FileJson, Route as RouteIcon, Info, Layers, CheckCircle2, RefreshCw, KeyRound, Lock, Unlock, ShieldAlert, Activity, FileCode, Check, Menu, X, Home, MessageSquare, Ticket, AlertTriangle, ChevronDown, CheckCircle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 interface SearchQueryLog {
@@ -40,17 +40,43 @@ export default function App() {
     feedbacks: [],
   });
 
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
+
+  // Tab Navigation State & Active Views (Default is "planner")
+  const [activeTab, setActiveTab] = useState<"home" | "planner" | "calculator" | "timeline" | "report">("planner");
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+
+  // Inline database correction form states mapping
+  const [reportName, setReportName] = useState("");
+  const [reportCategory, setReportCategory] = useState("fare_mismatch");
+  const [reportRouteId, setReportRouteId] = useState("");
+  const [reportNotes, setReportNotes] = useState("");
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportSuccess, setReportSuccess] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedRoute) {
+      setReportRouteId(selectedRoute.route_id);
+    }
+  }, [selectedRoute]);
 
   // Filter query for route browsing list
   const [routeSearchQuery, setRouteSearchQuery] = useState("");
 
   // Fetch routes from the Express server database on mount
-  const fetchServerRoutes = async (showNotification = false) => {
+  const fetchServerRoutes = async () => {
     try {
       const res = await fetch("/api/routes");
       const data = await res.json();
+      
+      if (data && data.maintenance) {
+        setMaintenanceMode(true);
+        setSourceLabel("System Maintenance");
+        setAppLoading(false);
+        return;
+      }
+
       if (data && data.success && Array.isArray(data.routes) && data.routes.length > 0) {
         setRoutes(data.routes);
         setIsMySQLActive(!!data.isMySQLActive);
@@ -60,6 +86,7 @@ export default function App() {
           setSourceLabel("Local Database Active");
         }
         setDbError(null);
+        setMaintenanceMode(false);
         
         // Retain selection if valid, otherwise select first
         const matched = data.routes.find((r: Route) => r.route_id === selectedRoute?.route_id);
@@ -71,17 +98,25 @@ export default function App() {
           setToStop(data.routes[0].stops[data.routes[0].stops.length - 1] || null);
         }
       } else {
-        const errorMsg = data?.error || "Zero bus pathways fetched from MySQL server tables.";
-        setDbError(errorMsg);
-        setSourceLabel("MySQL Offline");
-        setIsMySQLActive(false);
+        throw new Error(data?.error || "Empty routes data returned");
       }
     } catch (e: any) {
-      console.warn("Express server database offline or failed to query MySQL:", e);
-      // No server crash since we added failover on backend, but if fetch rejected, do standard handling
-      setDbError(`Failed to connect to the Express server API. Detail: ${e.message || String(e)}`);
-      setSourceLabel("MySQL Offline");
+      console.warn("Express server database offline or failed to query database:", e);
+      // If we are locally testing or fallback database occurs:
+      setRoutes(defaultRoutes);
+      setDbError(null);
+      setSourceLabel("Local Database Active");
       setIsMySQLActive(false);
+      setMaintenanceMode(false);
+
+      const matched = defaultRoutes.find((r: Route) => r.route_id === selectedRoute?.route_id);
+      if (matched) {
+        setSelectedRoute(matched);
+      } else {
+        setSelectedRoute(defaultRoutes[0]);
+        setFromStop(defaultRoutes[0].stops[0] || null);
+        setToStop(defaultRoutes[0].stops[defaultRoutes[0].stops.length - 1] || null);
+      }
     } finally {
       setAppLoading(false);
     }
@@ -164,6 +199,8 @@ export default function App() {
       setFromStop(null);
       setToStop(null);
     }
+    // Automatically switch active tab to ticket / calculator option
+    setActiveTab("calculator");
   };
 
   // Helper trigger utilized by the Search component: select route and assign stop to origin or destination
@@ -191,6 +228,7 @@ export default function App() {
     setSelectedRoute(route);
     setFromStop(origin);
     setToStop(destination);
+    setActiveTab("calculator");
     
     // Smoothly scroll to top calculator/ticket booth
     setTimeout(() => {
@@ -217,493 +255,657 @@ export default function App() {
     );
   }, [routes, routeSearchQuery]);
 
-  if (dbError && routes.length === 0) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans" id="mysql-error-fullscreen-wrapper">
-        <div className="max-w-md w-full py-12 px-8 bg-white border border-slate-200 shadow-xl rounded-2xl text-center space-y-6" id="mysql-error-fullscreen">
-          <div className="relative inline-flex">
-            <div className="p-4 bg-amber-50 text-amber-600 rounded-full border border-amber-100">
-              <ShieldAlert className="w-8 h-8 animate-pulse" />
-            </div>
-          </div>
-          
-          <div className="space-y-3">
-            <h1 className="text-[11px] uppercase tracking-widest font-extrabold text-slate-400 font-mono">
-              Dhaka Transit Responsibility Hub
-            </h1>
-            <h2 className="text-lg font-black uppercase tracking-wide text-slate-900 font-sans">
-              App in Maintenance
-            </h2>
-            <p className="text-xs font-semibold text-slate-600">
-              Please try again.
-            </p>
-            <p className="text-xs text-slate-550 leading-relaxed max-w-sm mx-auto">
-              We are currently aligning and updating our routes & fare synchronization database. Please try again later.
-            </p>
-          </div>
-
-          <div className="pt-4 border-t border-slate-100">
-            <button 
-              onClick={() => {
-                setAppLoading(true);
-                fetchServerRoutes(true);
-              }}
-              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5 shrink-0" />
-              <span>Retry Connection</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col md:flex-row relative" id="applet-viewport">
-      
-      {/* 1. COMPACT STICKY MOBILE TOP BAR (Hidden on desktop) */}
-      <div className="md:hidden sticky top-0 z-30 bg-white border-b border-slate-200/80 px-4 py-3 flex items-center justify-between shadow-xs w-full">
-        <button
-          onClick={() => setMobileSidebarOpen(true)}
-          className="p-2 -ml-2 text-slate-600 hover:text-indigo-650 active:scale-95 transition-all cursor-pointer"
-          title="Toggle Navigation Menu"
-        >
-          <Menu className="w-6 h-6" />
-        </button>
-        <div className="min-w-0 flex-1 px-3 text-center">
-          <h1 className="text-xs font-black tracking-tight text-slate-900 truncate uppercase">
-            Dhaka Transit Hub
-          </h1>
-          {selectedRoute && (
-            <span className="text-[10px] font-mono font-bold text-indigo-600 block truncate">
-              {selectedRoute.route_id} • {selectedRoute.route_name}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className={`inline-block w-2.5 h-2.5 rounded-full ${isMySQLActive ? "bg-emerald-500 animate-pulse" : "bg-amber-400"}`}></span>
-          <span className="text-[9px] font-bold text-slate-500 font-mono">
-            {isMySQLActive ? "MySQL" : "Local"}
-          </span>
-        </div>
-      </div>
-
-      {/* 2. RESPONSIVE MOBILE SIDEBAR DRAWER (Framer-motion powered slider overlay) */}
-      <AnimatePresence>
-        {mobileSidebarOpen && (
-          <>
-            {/* Backdrop filter */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.4 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setMobileSidebarOpen(false)}
-              className="md:hidden fixed inset-0 bg-black z-40"
-            />
-            {/* Slide-out Panel drawer drawer */}
-            <motion.div
-              initial={{ x: "-100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "-100%" }}
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="md:hidden fixed inset-y-0 left-0 w-80 max-w-[85vw] bg-white z-50 shadow-2xl flex flex-col border-r border-slate-200 h-full"
-            >
-              {/* Drawer Header */}
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-indigo-600 rounded-xl text-white">
-                    <Bus className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-xs font-black tracking-tight text-slate-900 uppercase">Dhaka Transit</h2>
-                    <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Responsibility Hub</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setMobileSidebarOpen(false)}
-                  className="p-2 -mr-2 text-slate-400 hover:text-slate-600 active:scale-95 transition-all shrink-0 cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Drawer Scrollable Content */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                {/* Connection Status Indicator */}
-                <div className="bg-slate-50 p-3 rounded-2xl border border-slate-150 flex flex-col gap-1">
-                  <span className="text-[9px] text-slate-400 block uppercase tracking-widest font-extrabold font-mono font-sans">
-                    Active DB Repository
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className={`inline-block w-2.5 h-2.5 rounded-full ${isMySQLActive ? "bg-emerald-500 animate-pulse" : "bg-amber-400"}`}></span>
-                    <span className="text-xs font-black text-slate-800 font-sans">
-                      {sourceLabel}
-                    </span>
-                  </div>
-                </div>
-
-                {/* DB Summary Stats Card */}
-                <div className="bg-gradient-to-br from-indigo-50/50 to-slate-50 p-3.5 rounded-2xl border border-indigo-100/50">
-                  <h3 className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono mb-2">Transit Metrics</h3>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="text-center bg-white py-2 rounded-xl border border-slate-100">
-                      <span className="text-[8px] text-slate-400 block font-bold uppercase">Lines</span>
-                      <span className="text-xs font-black text-slate-800 font-mono">{stats.routesCount}</span>
-                    </div>
-                    <div className="text-center bg-white py-2 rounded-xl border border-slate-100">
-                      <span className="text-[8px] text-slate-400 block font-bold uppercase">Stations</span>
-                      <span className="text-xs font-black text-slate-800 font-mono">{stats.uniqueStopsCount}</span>
-                    </div>
-                    <div className="text-center bg-white py-2 rounded-xl border border-slate-100">
-                      <span className="text-[8px] text-slate-400 block font-bold uppercase">Avg Stops</span>
-                      <span className="text-xs font-black text-slate-800 font-mono">{stats.averageStops}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Selected bus route overview inside drawer */}
-                {selectedRoute && (
-                  <div className="bg-indigo-600 text-white p-4 rounded-2xl shadow-md border border-indigo-700/50">
-                    <span className="text-[8px] font-mono tracking-widest bg-white/20 text-white font-black px-1.5 py-0.5 rounded-lg inline-block uppercase mb-1">
-                      SELECTED ROUTE CODE: {selectedRoute.route_id}
-                    </span>
-                    <h4 className="text-xs font-black leading-tight truncate text-left">{selectedRoute.route_name}</h4>
-                    <p className="text-[9px] text-indigo-150 mt-1 font-mono text-left">
-                      {selectedRoute.stops.length} checkpoints • {selectedRoute.stops[selectedRoute.stops.length - 1]?.cumulative_km.toFixed(1)} route km
-                    </p>
-                  </div>
-                )}
-
-                {/* Bus pathways list header */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black text-slate-900 uppercase tracking-wider font-sans">Select Bus Route</span>
-                    <span className="text-[10px] text-indigo-600 font-bold font-mono">{filteredRoutes.length} matching</span>
-                  </div>
-
-                  <input
-                    type="text"
-                    value={routeSearchQuery}
-                    onChange={(e) => setRouteSearchQuery(e.target.value)}
-                    placeholder="Search routes..."
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
-                  />
-
-                  <div className="space-y-1 max-h-[280px] overflow-y-auto pr-1">
-                    {filteredRoutes.map((r) => {
-                      const isSelected = selectedRoute?.route_id === r.route_id;
-                      return (
-                        <button
-                          key={r.route_id}
-                          onClick={() => {
-                            handleSelectRoute(r);
-                            setMobileSidebarOpen(false);
-                          }}
-                          className={`w-full p-2.5 rounded-xl text-left transition-all border shrink-0 text-xs flex items-center justify-between cursor-pointer ${
-                            isSelected
-                              ? "bg-indigo-600 text-white border-indigo-700 font-bold animate-none"
-                              : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1 text-left">
-                            <span className={`px-1.5 py-0.2 font-mono text-[9px] font-bold rounded-lg mr-2 ${isSelected ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-700 border border-indigo-100"}`}>
-                              {r.route_id}
-                            </span>
-                            <span className="truncate inline-block max-w-[140px] align-middle">{r.route_name}</span>
-                          </div>
-                          <span className={`text-[9px] font-mono whitespace-nowrap shrink-0 ml-1 ${isSelected ? "text-indigo-200" : "text-slate-400"}`}>
-                            {r.stops.length} stops
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* 3. PERSISTENT DESKTOP SIDEBAR (Static/sticky left panel) */}
-      <aside className="hidden md:flex flex-col w-84 bg-white border-r border-slate-200/80 h-screen sticky top-0 shrink-0 select-none z-10" id="desktop-sidebar">
-        {/* Brand Banner */}
-        <div className="p-5 border-b border-slate-100">
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col relative" id="applet-viewport">
+      {/* 1. BRAND HEADER & DATABASE INDICATOR */}
+      <header className="bg-white border-b border-slate-200/80 sticky top-0 z-30 shadow-xs" id="main-header">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
             <div className="p-2.5 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-md hover:scale-105 transition-transform shrink-0">
               <Bus className="w-5.5 h-5.5" />
             </div>
-            <div className="min-w-0">
-              <h1 className="text-xs uppercase tracking-widest font-black text-slate-400 font-mono">
-                Dhaka Transit
+            <div className="min-w-0 flex-1">
+              <h1 className="text-base sm:text-lg font-black tracking-tight text-slate-900 font-sans leading-none flex items-center gap-2">
+                Dhaka Transit Responsibility Hub
               </h1>
-              <h2 className="text-base font-black tracking-tight text-slate-900 font-sans">
-                Responsibility Hub
-              </h2>
-            </div>
-          </div>
-          <p className="text-[10px] text-slate-500 font-sans leading-tight mt-2 italic">
-            Taking complete liability over city bus alignments & fare calculations
-          </p>
-        </div>
-
-        {/* Scrollable Sidebar list */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-6">
-          {/* DB Indicator Widget */}
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150 flex flex-col gap-1 shadow-2xs">
-            <span className="text-[9px] text-slate-400 block uppercase tracking-widest font-bold font-mono font-sans">
-              Database Repository State
-            </span>
-            <div className="flex items-center gap-2">
-              <span className={`inline-block w-2.5 h-2.5 rounded-full ${isMySQLActive ? "bg-emerald-500 animate-pulse" : "bg-amber-400"}`}></span>
-              <span className="text-xs font-black text-slate-800 font-sans leading-none">
+              <p className="text-[11.5px] font-black text-indigo-700 font-mono mt-1.5 leading-tight uppercase flex items-center gap-1.5">
+                <span className={`w-2.5 h-2.5 rounded-full inline-block ${isMySQLActive ? "bg-emerald-500 animate-pulse" : "bg-indigo-500"}`}></span>
                 {sourceLabel}
-              </span>
+              </p>
             </div>
           </div>
+        </div>
+      </header>
 
-          {/* Quick Metrics stats integrated directly inside the sidebar */}
-          <div className="bg-indigo-50/40 p-4 rounded-2xl border border-indigo-100/50">
-            <h3 className="text-[9px] font-black uppercase text-slate-400 tracking-wider font-mono mb-2">Network Diagnostics</h3>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="text-center bg-white py-2 rounded-xl border border-slate-100 shadow-2xs">
-                <span className="text-[8px] text-slate-400 block font-bold uppercase">Lines</span>
-                <span className="text-xs font-black text-slate-800 font-mono">{stats.routesCount}</span>
-              </div>
-              <div className="text-center bg-white py-2 rounded-xl border border-slate-100 shadow-2xs">
-                <span className="text-[8px] text-slate-400 block font-bold uppercase">Stations</span>
-                <span className="text-xs font-black text-slate-800 font-mono">{stats.uniqueStopsCount}</span>
-              </div>
-              <div className="text-center bg-white py-2 rounded-xl border border-slate-100 shadow-2xs">
-                <span className="text-[8px] text-slate-400 block font-bold uppercase">Avg Stops</span>
-                <span className="text-xs font-black text-slate-800 font-mono">{stats.averageStops}</span>
-              </div>
+      {/* 2. MAIN HUB DASHBOARD CONTAINER */}
+      <main className="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 space-y-6 pb-28" id="dashboard-container">
+        {maintenanceMode ? (
+          <div className="py-24 text-center space-y-5 max-w-md mx-auto bg-white p-8 sm:p-10 rounded-3xl border border-rose-100 shadow-md" id="maintenance-panel">
+            <div className="w-14 h-14 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mx-auto shadow-xs border border-rose-100">
+              <AlertTriangle className="w-7 h-7 mx-auto animate-bounce text-rose-600" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-sm sm:text-base font-black text-rose-950 font-sans uppercase tracking-tight">Database Maintenance Active</h2>
+              <p className="text-xs text-slate-500 leading-relaxed font-sans font-medium">
+                The transit system is current configured to run strictly over our MySQL cluster server. MySQL connection is offline. The system is entering a safety maintenance status. Please retry shortly.
+              </p>
+            </div>
+            <div className="pt-2">
+              <button
+                onClick={() => {
+                  setAppLoading(true);
+                  setMaintenanceMode(false);
+                  fetchServerRoutes();
+                }}
+                className="px-5 py-3 w-full bg-slate-900 hover:bg-slate-800 text-white font-black text-xs uppercase tracking-widest rounded-xl transition-all cursor-pointer font-mono shadow-xs"
+              >
+                Retry Server Handshake
+              </button>
             </div>
           </div>
-
-          {/* Bus routes list buttons directly in sidebar */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black text-slate-900 uppercase tracking-wider font-sans">Active Bus Networks</span>
-              <span className="text-[10px] text-slate-405 font-mono font-bold bg-slate-100 px-2 py-0.5 rounded-lg">
-                {routes.length} total
-              </span>
-            </div>
-
-            {/* Quick Filter */}
-            <div className="relative">
-              <input
-                type="text"
-                value={routeSearchQuery}
-                onChange={(e) => setRouteSearchQuery(e.target.value)}
-                placeholder="Search bus line id or names..."
-                className="w-full px-3 py-2 text-xs border border-slate-205 rounded-xl bg-slate-50/70 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-sans"
-              />
-            </div>
-
-            {/* Selector Catalog list buttons */}
-            <div className="space-y-1.5 max-h-[350px] overflow-y-auto pr-1" id="sidebar-route-list">
-              {filteredRoutes.map((r) => {
-                const isSelected = selectedRoute?.route_id === r.route_id;
-                return (
-                  <button
-                    key={r.route_id}
-                    onClick={() => handleSelectRoute(r)}
-                    className={`w-full p-3 rounded-xl text-left transition-all border flex flex-col justify-between cursor-pointer ${
-                      isSelected
-                        ? "bg-indigo-600 text-white border-indigo-700 shadow-md font-semibold animate-none"
-                        : "bg-slate-50/70 hover:bg-slate-50 text-slate-700 border-slate-200"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span className={`px-1.5 py-0.2 font-mono text-[9px] font-bold rounded-lg ${
-                        isSelected ? "bg-white/20 text-white" : "bg-white text-indigo-700 border border-indigo-100 shadow-3xs"
-                      }`}>
-                        {r.route_id}
-                      </span>
-                      <span className={`text-[9px] font-mono ${isSelected ? "text-indigo-200" : "text-slate-400"}`}>
-                        {r.stops.length} stops · {r.stops[r.stops.length - 1]?.cumulative_km.toFixed(1)} km
-                      </span>
+        ) : appLoading ? (
+          <div className="py-32 text-center space-y-3 block">
+            <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin mx-auto" />
+            <p className="text-xs text-slate-500 font-medium font-mono">Syncing server variables & pathways...</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <AnimatePresence mode="wait">
+              {activeTab === "home" && (
+                <motion.div
+                  key="home"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-6"
+                >
+                  {/* Quick Metrics stats integrated directly as an elegant top-level row */}
+                  <div className="grid grid-cols-3 gap-3" id="diagnostics-metrics-row">
+                    <div className="bg-white p-3.5 sm:p-4.5 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-2.5 sm:gap-4 hover:shadow-xs transition-shadow">
+                      <div className="p-2 sm:p-3 bg-indigo-50 text-indigo-600 rounded-xl shrink-0 border border-indigo-100">
+                        <RouteIcon className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[8px] sm:text-[9.5px] text-slate-400 block font-black uppercase tracking-wider font-mono">Active Lines</span>
+                        <span className="text-xs sm:text-base font-black text-slate-900 font-mono leading-none">{stats.routesCount}</span>
+                      </div>
                     </div>
-                    <p className="text-xs font-extrabold mt-2 truncate max-w-full font-sans leading-tight text-left">{r.route_name}</p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
 
-        {/* Sidebar Footer Credit line */}
-        <div className="p-4 border-t border-slate-100 text-center bg-slate-50/50 select-none">
-          <p className="text-[10px] text-slate-400 font-mono font-medium">Remote Database Connected</p>
-        </div>
-      </aside>
+                    <div className="bg-white p-3.5 sm:p-4.5 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-2.5 sm:gap-4 hover:shadow-xs transition-shadow">
+                      <div className="p-2 sm:p-3 bg-emerald-50 text-emerald-600 rounded-xl shrink-0 border border-emerald-100">
+                        <Map className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[8px] sm:text-[9.5px] text-slate-400 block font-black uppercase tracking-wider font-mono">Stations</span>
+                        <span className="text-xs sm:text-base font-black text-slate-900 font-mono leading-none">{stats.uniqueStopsCount}</span>
+                      </div>
+                    </div>
 
-      {/* 4. MAIN PRODUCTIVITY DASHBOARD VIEWPORT (Takes up rest of the space) */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
-        <main className="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 md:p-8 space-y-6" id="dashboard-container">
-          
-          {appLoading ? (
-            <div className="py-32 text-center space-y-3">
-              <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin mx-auto" />
-              <p className="text-xs text-slate-500 font-medium font-mono">Syncing server variables & pathways...</p>
-            </div>
-          ) : (
-            <div className="space-y-6 animate-fade-in">
-              
-              {/* Desktop Dashboard Title Banner Block */}
-              <div className="hidden md:flex items-center justify-between pb-2" id="desktop-section-header">
-                <div>
-                  <h2 className="text-xl font-black text-slate-900 tracking-tight font-sans">
-                     Dhaka Transit Console
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1">
-                     Manage dynamic route selections, stop coordinates, and fare calculations globally
-                  </p>
-                </div>
-                {selectedRoute && (
-                  <div className="flex items-center gap-2 bg-indigo-50/50 px-3 py-1.5 rounded-2xl border border-indigo-100">
-                     <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-ping"></span>
-                     <span className="text-xs font-mono font-black text-indigo-800">
-                        Line: {selectedRoute.route_id}
-                     </span>
+                    <div className="bg-white p-3.5 sm:p-4.5 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-2.5 sm:gap-4 hover:shadow-xs transition-shadow">
+                      <div className="p-2 sm:p-3 bg-amber-50 text-amber-600 rounded-xl shrink-0 border border-amber-100">
+                        <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[8px] sm:text-[9.5px] text-slate-400 block font-black uppercase tracking-wider font-mono">Avg Stops</span>
+                        <span className="text-xs sm:text-base font-black text-slate-900 font-mono leading-none">{stats.averageStops}</span>
+                      </div>
+                    </div>
                   </div>
-                )}
-              </div>
 
-              {/* 1. Route Finder / Journey Planner Deck */}
-              <PlaceSearch
-                routes={routes}
-                onSelectRouteStop={handleSelectRouteStop}
-                onSelectFullTrip={handleSelectFullTrip}
-                selectedRouteId={selectedRoute?.route_id}
-                selectedFromStopName={fromStop?.stop_name}
-                selectedToStopName={toStop?.stop_name}
-                onLogSearch={handleLogSearch}
-              />
+                  {/* 3. TRANSIT NAVIGATION BUTTONS CATALOG PANEL */}
+                  <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/85 shadow-xs space-y-4" id="routes-nav-container">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                      <div>
+                        <span className="text-[9.5px] text-slate-400 font-mono block uppercase tracking-wider font-bold">Transit Navigation System</span>
+                        <h3 className="text-xs sm:text-sm font-black text-slate-950 uppercase tracking-tight">Active Bus Lines (Switch Route instantly)</h3>
+                      </div>
+                      
+                      {/* Search input inside list */}
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={routeSearchQuery}
+                          onChange={(e) => setRouteSearchQuery(e.target.value)}
+                          placeholder="Search bus line id or names..."
+                          className="w-full md:w-64 px-3 py-1.5 text-xs border border-slate-200 rounded-xl bg-slate-50 text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white transition-all font-sans"
+                        />
+                      </div>
+                    </div>
 
-              {/* 2. Live Corridor Map Simulation Widget */}
-              <div className="space-y-2 bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs">
-                <div className="flex items-center justify-between pb-1">
-                  <div>
-                    <span className="text-[10px] text-slate-400 font-mono block uppercase tracking-wider font-bold">
-                      Live Simulated Transit Corridor
-                    </span>
-                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider font-sans">
-                      Line Map Simulation
-                    </h3>
+                    {/* Grid / Flex Wrap Row of Route Selection Buttons */}
+                    <div className="flex flex-wrap gap-2 pt-1" id="routes-navbar">
+                      {filteredRoutes.map((r) => {
+                        const isSelected = selectedRoute?.route_id === r.route_id;
+                        return (
+                          <button
+                            key={r.route_id}
+                            onClick={() => handleSelectRoute(r)}
+                            className={`flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-2xl border text-xs font-black transition-all cursor-pointer shadow-3xs hover:-translate-y-0.5 active:translate-y-0 ${
+                              isSelected
+                                ? "bg-indigo-600 text-white border-indigo-700 font-sans shadow-md animate-none"
+                                : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                            }`}
+                          >
+                            <span className={`px-1.5 py-0.5 font-mono text-[9px] font-extrabold rounded-lg ${
+                              isSelected ? "bg-white/20 text-white" : "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                            }`}>
+                              {r.route_id}
+                            </span>
+                            <span className="font-sans leading-none">{r.route_name}</span>
+                            <span className={`text-[9px] px-1 font-mono leading-none rounded-sm ${isSelected ? "text-indigo-200" : "text-slate-400"}`}>
+                              ({r.stops.length} stops)
+                            </span>
+                          </button>
+                        );
+                      })}
+
+                      {filteredRoutes.length === 0 && (
+                        <div className="text-center py-6 w-full bg-slate-50/55 rounded-2xl border border-dashed border-slate-200">
+                          <p className="text-xs text-slate-500 font-medium font-sans">No active bus pathways found matching "{routeSearchQuery}"</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
+
                   {selectedRoute && (
-                    <span className="text-[10px] font-mono font-bold text-indigo-700 tracking-wider bg-indigo-50 border border-indigo-150 rounded-lg px-2 py-0.5">
-                      Line {selectedRoute.route_id}
-                    </span>
+                    <div className="p-5 bg-indigo-600 text-white rounded-3xl shadow-lg border border-indigo-700/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <span className="text-[8.5px] font-mono tracking-widest bg-white/20 text-white font-black px-2 py-0.5 rounded-lg inline-block uppercase mb-1">
+                          SELECTED ACTIVE CORRIDOR
+                        </span>
+                        <h4 className="text-sm sm:text-base font-black leading-tight text-white">{selectedRoute.route_name}</h4>
+                        <p className="text-[10px] text-indigo-150 mt-1 font-mono">
+                          Contains {selectedRoute.stops.length} checkpoint stops spanning over {selectedRoute.stops[selectedRoute.stops.length - 1]?.cumulative_km?.toFixed(1)} cumulative kilometers
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setActiveTab("planner");
+                          }}
+                          className="bg-white/25 hover:bg-white/30 active:bg-white/40 text-white text-[11px] font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer select-none"
+                        >
+                          View Planner Map ➔
+                        </button>
+                      </div>
+                    </div>
                   )}
-                </div>
-                <VisualRouteLineMap
-                   route={selectedRoute}
-                   fromStop={fromStop}
-                   toStop={toStop}
-                   onSelectStop={(stop, role) => selectedRoute && handleSelectRouteStop(selectedRoute, stop, role)}
-                />
-              </div>
 
-              {/* 3. Fare calculations dynamic ticket Booth */}
-              <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs">
-                <div className="pb-4 mb-4 border-b border-rose-100/10">
-                   <span className="text-[10px] text-slate-400 font-mono block uppercase tracking-wider font-bold">Ticket Fare O'Meter</span>
-                   <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider font-sans">Transit Ticket Generator</h3>
-                </div>
-                <FareCalculator
-                  routes={routes}
-                  selectedRoute={selectedRoute}
-                  onSelectRoute={handleSelectRoute}
-                  fromStop={fromStop}
-                  onSelectFromStop={setFromStop}
-                  toStop={toStop}
-                  onSelectToStop={setToStop}
-                />
-              </div>
 
-              {/* 4. Stop-by-Stop Checkpoint Timelines Element */}
-              <div className="space-y-4">
-                <div className="bg-indigo-50/60 rounded-3xl p-4 border border-indigo-100 text-[11px] font-sans text-indigo-850 flex items-center justify-between gap-3">
-                  <p className="leading-relaxed">
-                    🧑‍🏫 <strong>Quick Timeline Guide:</strong> Tap stop circle nodes in the timeline vertical list below to instantly change ticket boarding coordinates or board markers.
-                  </p>
-                </div>
+                </motion.div>
+              )}
 
-                <RouteTimeline
-                  route={selectedRoute}
-                  fromStop={fromStop}
-                  toStop={toStop}
-                  onSelectStop={(stop, role) => {
-                    if (role === "from") {
-                      setFromStop(stop);
-                    } else {
-                      setToStop(stop);
-                    }
-                  }}
-                />
-              </div>
+              {activeTab === "planner" && (
+                <motion.div
+                  key="planner"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-6"
+                >
+                  {/* Journey Planner & Fare O'Meter Section */}
+                  <PlaceSearch
+                    routes={routes}
+                    onSelectRouteStop={handleSelectRouteStop}
+                    onSelectFullTrip={handleSelectFullTrip}
+                    selectedRouteId={selectedRoute?.route_id}
+                    selectedFromStopName={fromStop?.stop_name}
+                    selectedToStopName={toStop?.stop_name}
+                    onLogSearch={handleLogSearch}
+                  />
 
-              {/* 5. User-Requested Disclaimer with submission active indicator */}
+                  {/* Live Corridor Map Simulation Widget */}
+                  <div className="space-y-2 bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs">
+                    <div className="flex items-center justify-between pb-1">
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-mono block uppercase tracking-wider font-bold">
+                          Live Simulated Transit Corridor
+                        </span>
+                        <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider font-sans">
+                          Line Map Simulation
+                        </h3>
+                      </div>
+                      {selectedRoute && (
+                        <span className="text-[10px] font-mono font-bold text-indigo-700 tracking-wider bg-indigo-50 border border-indigo-150 rounded-lg px-2 py-0.5 animate-none">
+                          Line {selectedRoute.route_id}
+                        </span>
+                      )}
+                    </div>
+                    <VisualRouteLineMap
+                       route={selectedRoute}
+                       fromStop={fromStop}
+                       toStop={toStop}
+                       onSelectStop={(stop, role) => selectedRoute && handleSelectRouteStop(selectedRoute, stop, role)}
+                    />
+                  </div>
+                </motion.div>
+              )}
+
+              {activeTab === "calculator" && (
+                <motion.div
+                  key="calculator"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-6"
+                >
+                  {/* Fare calculations dynamic ticket Booth */}
+                  <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs">
+                    <div className="pb-4 mb-4 border-b border-slate-100">
+                       <span className="text-[10px] text-slate-400 font-mono block uppercase tracking-wider font-bold">Ticket Fare O'Meter</span>
+                       <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider font-sans">Transit Ticket Generator</h3>
+                    </div>
+                    <FareCalculator
+                      routes={routes}
+                      selectedRoute={selectedRoute}
+                      onSelectRoute={handleSelectRoute}
+                      fromStop={fromStop}
+                      onSelectFromStop={setFromStop}
+                      toStop={toStop}
+                      onSelectToStop={setToStop}
+                      onOpenReport={() => setIsReportOpen(true)}
+                    />
+                  </div>
+                </motion.div>
+              )}
+
+              {activeTab === "timeline" && (
+                <motion.div
+                  key="timeline"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-4"
+                >
+                  <div className="bg-indigo-50/60 rounded-3xl p-4 border border-indigo-100 text-[11px] font-sans text-indigo-850 flex items-center justify-between gap-3">
+                    <p className="leading-relaxed">
+                      🧑‍🏫 <strong>Quick Timeline Guide:</strong> Tap stop circle nodes in the timeline vertical list below to instantly change ticket boarding coordinates or board markers.
+                    </p>
+                  </div>
+
+                  <RouteTimeline
+                    route={selectedRoute}
+                    fromStop={fromStop}
+                    toStop={toStop}
+                    onSelectStop={(stop, role) => {
+                      if (role === "from") {
+                        setFromStop(stop);
+                      } else {
+                        setToStop(stop);
+                      }
+                    }}
+                  />
+                </motion.div>
+              )}
+
+              {activeTab === "report" && (
+                <motion.div
+                  key="report"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-6"
+                >
+                  {/* Inline Database Correction Form */}
+                  <div className="bg-white rounded-3xl border border-slate-200/85 p-6 shadow-xs space-y-6">
+                    <div className="pb-4 border-b border-slate-150">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-amber-50 text-amber-755 text-[10px] font-mono font-bold rounded-lg border border-amber-200">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        DATABASE RECONCILIATION HUB
+                      </span>
+                      <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider font-sans mt-2">
+                        Report Inaccuracy / Correct Stop Sequences
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-1 leading-normal">
+                        Help us make Dhaka's dynamic distance matrices completely accurate. Submit precise interval records to overwrite outdated database nodes.
+                      </p>
+                    </div>
+
+                    <AnimatePresence mode="wait">
+                      {reportSuccess ? (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="py-12 flex flex-col items-center text-center space-y-4"
+                          id="report-success-screen"
+                        >
+                          <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center border border-emerald-200 shadow-xs animate-bounce">
+                            <CheckCircle className="w-10 h-10" />
+                          </div>
+                          <div>
+                            <h4 className="text-base font-black text-slate-900 uppercase tracking-wider">Report Filed Successfully!</h4>
+                            <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto leading-relaxed">
+                              Thank you for your verification query. Your correction entry has been formatted and logged into <strong>reports_db.json</strong>.
+                            </p>
+                            <button
+                              onClick={() => {
+                                setReportSuccess(false);
+                                setReportNotes("");
+                              }}
+                              className="mt-6 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl cursor-pointer"
+                            >
+                              File Another Discrepancy Report
+                            </button>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <motion.form
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (!reportNotes.trim()) {
+                              setReportError("Please specify description details for this route correction.");
+                              return;
+                            }
+                            setReportSubmitting(true);
+                            setReportError(null);
+                            try {
+                              const res = await fetch("/api/reports", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  name: reportName.trim() || undefined,
+                                  category: reportCategory,
+                                  routeId: reportRouteId,
+                                  notes: reportNotes.trim()
+                                })
+                              });
+                              const d = await res.json();
+                              if (d.success) {
+                                setReportSuccess(true);
+                                setReportName("");
+                                setReportNotes("");
+                              } else {
+                                setReportError(d.error || "Failed to submit database update.");
+                              }
+                            } catch {
+                              setReportError("Network failure. Preserving draft layout.");
+                            } finally {
+                              setReportSubmitting(false);
+                            }
+                          }}
+                          className="space-y-5"
+                          id="report-inline-form"
+                        >
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-mono text-slate-400 uppercase tracking-widest font-black block">
+                                1. Affected Bus Line
+                              </label>
+                              <div className="relative">
+                                <select
+                                  value={reportRouteId}
+                                  onChange={(e) => setReportRouteId(e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 py-2.5 pl-3 pr-10 text-xs text-slate-800 rounded-xl appearance-none focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold"
+                                >
+                                  {routes.map((r) => (
+                                    <option key={r.route_id} value={r.route_id}>
+                                      Line {r.route_id} — {r.route_name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5 pointer-events-none" />
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-mono text-slate-400 uppercase tracking-widest font-black block">
+                                Category of Error
+                              </label>
+                              <div className="relative">
+                                <select
+                                  value={reportCategory}
+                                  onChange={(e) => setReportCategory(e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-205 py-2.5 pl-3 pr-10 text-xs text-slate-800 rounded-xl appearance-none focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+                                >
+                                  <option value="fare_mismatch">Wrong Fare Pricing Matrix</option>
+                                  <option value="missing_stop">Missing Physical Stop</option>
+                                  <option value="sequence_error">Incorrect Bus Sequence Order</option>
+                                  <option value="distance_error">Inaccurate Interdistance KM</option>
+                                  <option value="other_issue">Other App Bug / Platform Issue</option>
+                                </select>
+                                <ChevronDown className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5 pointer-events-none" />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-mono text-slate-400 uppercase tracking-widest font-black block">
+                              Your Name (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              value={reportName}
+                              onChange={(e) => setReportName(e.target.value)}
+                              placeholder="e.g. Sajid Chowdhury"
+                              className="w-full bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs text-slate-800 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder-slate-400"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <div className="flex justify-between items-center">
+                              <label className="text-[10px] font-mono text-slate-400 uppercase tracking-widest font-black block">
+                                Correction Details
+                              </label>
+                              <span className="text-[10px] text-slate-400 italic">Please be specific</span>
+                            </div>
+                            <textarea
+                              rows={4}
+                              value={reportNotes}
+                              onChange={(e) => setReportNotes(e.target.value)}
+                              placeholder="Describe the discrepancy... e.g. 'The fare from Shahbagh to Farmgate should be 10 BDT instead of 15 BDT' or 'Line 1 lists Mirpur-10 before Kazipara, but Kazipara is reached first'."
+                              className="w-full bg-slate-50 border border-slate-200 p-3 text-xs text-slate-800 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder-slate-400 leading-relaxed"
+                            />
+                          </div>
+
+                          {reportError && (
+                            <div className="p-3.5 bg-rose-50 border border-rose-150 text-rose-700 text-xs rounded-xl flex items-start gap-2">
+                              <ShieldAlert className="w-4 h-4 shrink-0 text-rose-500 mt-0.5" />
+                              <p className="font-medium leading-normal">{reportError}</p>
+                            </div>
+                          )}
+
+                          <button
+                            type="submit"
+                            disabled={reportSubmitting}
+                            className="w-full py-3 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md disabled:opacity-50 select-none flex items-center justify-center gap-1.5"
+                          >
+                            {reportSubmitting ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>Verifying Database Link...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>Save Correction Log</span>
+                                <span>➔</span>
+                              </>
+                            )}
+                          </button>
+                        </motion.form>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Disclaimer at bottom with direct tab transition trigger */}
+            {activeTab !== "report" && (
               <div className="p-5 bg-amber-50 rounded-3xl border border-amber-200/60 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-700" id="passenger-report-banner">
                 <div className="space-y-1">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-amber-100/80 text-amber-850 text-[10px] font-bold rounded-lg uppercase tracking-wider font-sans">
                     ⚠️ Database Error / Inaccuracy Notice
                   </span>
-                  <p className="text-xs text-slate-650 leading-relaxed font-sans mt-0.5 font-medium">
+                  <p className="text-xs text-slate-655 leading-relaxed font-sans mt-0.5 font-medium">
                     We verify transit distance matrices rigorously, but human mistakes can crop up. Spotted mismatched fares, sequence errors, or skipped bus stations? Help us correction-log the database in real-time.
                   </p>
                 </div>
                 <button
-                  onClick={() => setIsReportOpen(true)}
+                  onClick={() => {
+                    setReportRouteId(selectedRoute?.route_id || routes[0]?.route_id || "");
+                    setReportError(null);
+                    setReportSuccess(false);
+                    setActiveTab("report");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
                   className="px-5 py-3 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-black text-xs rounded-2xl shadow-sm border border-amber-600/20 cursor-pointer select-none transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5"
                 >
-                  <span>Report Error or Mistake</span>
+                  <span>Report Inaccuracies</span>
                   <span>➔</span>
                 </button>
               </div>
-
-            </div>
-          )}
-
-        </main>
-
-        {/* Global Report Correction Form Modal Overlay */}
-        <ReportPopup
-          isOpen={isReportOpen}
-          onClose={() => setIsReportOpen(false)}
-          routes={routes}
-          selectedRouteId={selectedRoute?.route_id}
-        />
-
-        {/* Standard Footer */}
-        <footer className="bg-white border-t border-slate-200 text-slate-500 text-xs py-8" id="main-footer">
-          <div className="max-w-5xl mx-auto px-6 space-y-4">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4 pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Compass className="w-5 h-5 text-indigo-600 hover:rotate-12 transition-transform shadow-xs" />
-                <p className="font-bold text-slate-900"> Dhaka Transit Responsibility Hub</p>
-              </div>
-              <p className="text-[11px] text-slate-500 max-w-md text-center md:text-left font-sans">
-                In compliance with local city transport distance regulations. Route timelines and bus fare tickets auto-rendered from remote server repository.
-              </p>
-              <div className="flex gap-4 items-center">
-                <span className="text-[11px] text-slate-400 font-medium">
-                  🔐 Encrypted Connection Secure
-                </span>
-                <span className="text-slate-200">|</span>
-                <p className="text-[10px] text-indigo-750 tracking-wider uppercase font-mono bg-indigo-50 px-3 py-1 rounded-lg border border-indigo-100 font-bold">
-                  Secure Cloud Active
-                </p>
-              </div>
-            </div>
+            )}
           </div>
-        </footer>
+        )}
+      </main>
+
+      {/* 3. HIGH FIDELITY STICKY FLOATING REAL-TIME PORTABLE BOTTOM NAVIGATION */}
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] sm:w-full sm:max-w-md bg-slate-900/95 backdrop-blur-md rounded-3xl py-2 px-3 border border-slate-800 shadow-[0_12px_45px_rgba(0,0,0,0.38)] z-40" id="sticky-realtime-nav">
+        <div className="flex items-center justify-around relative">
+          
+          {/* Tab 1: Home */}
+          <button
+            onClick={() => setActiveTab("home")}
+            className={`flex flex-col items-center justify-center p-2 rounded-2xl relative transition-all duration-200 cursor-pointer ${
+              activeTab === "home" ? "text-indigo-400 scale-105" : "text-slate-400 hover:text-slate-200"
+            }`}
+            title="Overview & Catalog"
+          >
+            <Home className="w-5 h-5 transition-transform" />
+            <span className="text-[9px] font-mono font-bold tracking-tight mt-1">Home</span>
+            {activeTab === "home" && (
+              <motion.div
+                layoutId="active-tab-indicator"
+                className="absolute -bottom-1 w-6 h-1 bg-indigo-500 rounded-full"
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+            )}
+          </button>
+
+          {/* Tab 2: Ticket */}
+          <button
+            onClick={() => setActiveTab("calculator")}
+            className={`flex flex-col items-center justify-center p-2 rounded-2xl relative transition-all duration-200 cursor-pointer ${
+              activeTab === "calculator" ? "text-indigo-400 scale-105" : "text-slate-400 hover:text-slate-200"
+            }`}
+            title="Ticket Fare Calculator"
+          >
+            <Ticket className="w-5 h-5 transition-transform" />
+            <span className="text-[9px] font-mono font-bold tracking-tight mt-1">Ticket</span>
+            {activeTab === "calculator" && (
+              <motion.div
+                layoutId="active-tab-indicator"
+                className="absolute -bottom-1 w-6 h-1 bg-indigo-500 rounded-full"
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+            )}
+          </button>
+
+          {/* Tab 3: Centered Floating High-Contrast Indicator - Planner */}
+          <div className="relative -mt-6">
+            <button
+              onClick={() => {
+                setActiveTab("planner");
+              }}
+              className={`w-14 h-14 bg-gradient-to-tr from-sky-450 to-indigo-650 rounded-2xl flex flex-col items-center justify-center text-white shadow-[0_8px_30px_rgba(79,70,229,0.35)] hover:scale-105 active:scale-95 transition-all cursor-pointer border border-white/20`}
+              title="Journey Planner & Map"
+            >
+              <div className="relative">
+                <Compass className="w-6 h-6 animate-pulse" />
+                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-450 rounded-full border border-white animate-pulse"></span>
+              </div>
+            </button>
+            <span className="text-[8px] font-mono font-extrabold tracking-widest text-indigo-400/90 block text-center uppercase mt-1">
+              Planner
+            </span>
+          </div>
+
+          {/* Tab 4: Routes Timeline */}
+          <button
+            onClick={() => setActiveTab("timeline")}
+            className={`flex flex-col items-center justify-center p-2 rounded-2xl relative transition-all duration-200 cursor-pointer ${
+              activeTab === "timeline" ? "text-indigo-400" : "text-slate-400 hover:text-slate-200"
+            }`}
+            title="Stop Timelines"
+          >
+            <RouteIcon className="w-5 h-5" />
+            <span className="text-[9px] font-mono font-bold tracking-tight mt-1">Routes</span>
+            {activeTab === "timeline" && (
+              <motion.div
+                layoutId="active-tab-indicator"
+                className="absolute -bottom-1 w-6 h-1 bg-indigo-500 rounded-full"
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+            )}
+          </button>
+
+          {/* Tab 5: Report Hub */}
+          <button
+            onClick={() => {
+              setReportRouteId(selectedRoute?.route_id || routes[0]?.route_id || "");
+              setReportError(null);
+              setReportSuccess(false);
+              setActiveTab("report");
+            }}
+            className={`flex flex-col items-center justify-center p-2 rounded-2xl relative transition-all duration-200 cursor-pointer ${
+              activeTab === "report" ? "text-indigo-400" : "text-slate-400 hover:text-slate-200"
+            }`}
+            title="Report Correction Hub"
+          >
+            <div className="relative">
+              <MessageSquare className="w-5 h-5" />
+              <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-500 rounded-full"></span>
+            </div>
+            <span className="text-[9px] font-mono font-bold tracking-tight mt-1">Report</span>
+            {activeTab === "report" && (
+              <motion.div
+                layoutId="active-tab-indicator"
+                className="absolute -bottom-1 w-6 h-1 bg-indigo-500 rounded-full"
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+            )}
+          </button>
+
+        </div>
       </div>
 
+      {/* Global Report Correction Form Modal Overlay */}
+      <ReportPopup
+        isOpen={isReportOpen}
+        onClose={() => setIsReportOpen(false)}
+        routes={routes}
+        selectedRouteId={selectedRoute?.route_id}
+      />
+
+      {/* Standard Footer */}
+      <footer className="bg-white border-t border-slate-200 text-slate-500 text-xs py-8" id="main-footer">
+        <div className="max-w-5xl mx-auto px-6 space-y-4">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <Compass className="w-5 h-5 text-indigo-600 hover:rotate-12 transition-transform shadow-xs" />
+              <p className="font-bold text-slate-900"> Dhaka Transit Responsibility Hub</p>
+            </div>
+            <p className="text-[11px] text-slate-500 max-w-md text-center md:text-left font-sans">
+              In compliance with local city transport distance regulations. Route timelines and bus fare tickets auto-rendered from remote server repository.
+            </p>
+            <div className="flex gap-4 items-center">
+              <span className="text-[11px] text-slate-400 font-medium">
+                🔐 Encrypted Connection Secure
+              </span>
+              <span className="text-slate-200">|</span>
+              <p className="text-[10px] text-indigo-755 tracking-wider uppercase font-mono bg-indigo-50 px-3 py-1 rounded-lg border border-indigo-100 font-bold">
+                Secure Cloud Active
+              </p>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

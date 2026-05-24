@@ -12,6 +12,7 @@ interface FareCalculatorProps {
   onSelectFromStop: (stop: Stop | null) => void;
   toStop: Stop | null;
   onSelectToStop: (stop: Stop | null) => void;
+  onOpenReport?: () => void;
 }
 
 export default function FareCalculator({
@@ -22,6 +23,7 @@ export default function FareCalculator({
   onSelectFromStop,
   toStop,
   onSelectToStop,
+  onOpenReport,
 }: FareCalculatorProps) {
   // Swap stops for swift direction reversal
   const handleSwapStops = () => {
@@ -176,7 +178,8 @@ export default function FareCalculator({
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
-            className="bg-indigo-50/40 border border-dashed border-indigo-200 rounded-xl p-4 space-y-4 shadow-sm"
+            whileHover={{ scale: 1.015 }}
+            className="group/ticket bg-indigo-50/40 hover:bg-white border border-dashed hover:border-solid border-indigo-200 hover:border-indigo-500 rounded-xl p-4 space-y-4 shadow-sm hover:shadow-md transition-all duration-300"
           >
             {/* Visual Receipt ticket header */}
             <div className="flex border-b border-dashed border-indigo-200/80 pb-3 justify-between items-center">
@@ -255,6 +258,33 @@ export default function FareCalculator({
                 </span>
                 <p className="text-[10px] text-slate-400">including all local transport duties</p>
               </div>
+            </div>
+
+            {/* Dual verification and error annotation hotlinks */}
+            <div className="pt-3 flex items-center justify-between gap-4 border-t border-dashed border-slate-205">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onOpenReport) onOpenReport();
+                }}
+                className="flex-1 py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-850 font-bold text-xs rounded-xl border border-red-100 flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                id="ticket-report-left"
+              >
+                <span>⚠️ Add Report</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onOpenReport) onOpenReport();
+                }}
+                className="flex-1 py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-850 font-bold text-xs rounded-xl border border-red-100 flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95 text-right"
+                id="ticket-report-right"
+              >
+                <span>Add Report ⚠️</span>
+              </button>
             </div>
           </motion.div>
         ) : (

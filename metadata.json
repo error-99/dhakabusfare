@@ -1,6 +1,6 @@
 {
   "name": "Bus Fare Counter",
-  "description": "Calculate bus fares and search for routes by place names with custom route data upload.",
+  "description": "Calculate bus fares, view simulated line maps, and submit real-time stop sequence database corrections via custom mobile-first tabs.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
