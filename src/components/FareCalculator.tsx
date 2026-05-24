@@ -178,8 +178,7 @@ export default function FareCalculator({
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
-            whileHover={{ scale: 1.015 }}
-            className="group/ticket bg-indigo-50/40 hover:bg-white border border-dashed hover:border-solid border-indigo-200 hover:border-indigo-500 rounded-xl p-4 space-y-4 shadow-sm hover:shadow-md transition-all duration-300"
+            className="group/ticket bg-indigo-50/45 hover:bg-white border border-dashed hover:border-solid border-indigo-200 hover:border-indigo-500 rounded-xl p-4 space-y-4 shadow-sm hover:shadow-md transition-all duration-300"
           >
             {/* Visual Receipt ticket header */}
             <div className="flex border-b border-dashed border-indigo-200/80 pb-3 justify-between items-center">

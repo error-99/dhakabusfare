@@ -61,6 +61,11 @@ export default function App() {
     }
   }, [selectedRoute]);
 
+  // Handle smooth scroll to the top of the page on view transition
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [activeTab]);
+
   // Filter query for route browsing list
   const [routeSearchQuery, setRouteSearchQuery] = useState("");
 
@@ -199,8 +204,6 @@ export default function App() {
       setFromStop(null);
       setToStop(null);
     }
-    // Automatically switch active tab to ticket / calculator option
-    setActiveTab("calculator");
   };
 
   // Helper trigger utilized by the Search component: select route and assign stop to origin or destination
@@ -232,7 +235,7 @@ export default function App() {
     
     // Smoothly scroll to top calculator/ticket booth
     setTimeout(() => {
-      window.scrollTo({ top: 300, behavior: "smooth" });
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }, 100);
   };
 
